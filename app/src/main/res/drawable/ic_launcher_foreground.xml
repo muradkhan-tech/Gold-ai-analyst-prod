@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Gold Bullion Base / Trapezoid bar at bottom -->
+    <path
+        android:pathData="M33,70 L75,70 L70,78 L38,78 Z"
+        android:fillColor="#D97706" />
+    <path
+        android:pathData="M35,68 L73,68 L70,72 L38,72 Z"
+        android:fillColor="#FBBF24" />
+
+    <!-- Candlestick 1: Bullish Bar Left -->
+    <!-- Wick -->
+    <path
+        android:pathData="M37,42 L37,64"
+        android:strokeWidth="1.5"
+        android:strokeColor="#F59E0B" />
+    <!-- Body -->
+    <path
+        android:pathData="M34,48 L40,48 L40,60 L34,60 Z"
+        android:fillColor="#F59E0B" />
+
+    <!-- Candlestick 2: Bullish Bar Middle -->
+    <!-- Wick -->
+    <path
+        android:pathData="M54,34 L54,64"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FBBF24" />
+    <!-- Body -->
+    <path
+        android:pathData="M51,40 L57,40 L57,56 L51,56 Z"
+        android:fillColor="#FBBF24" />
+
+    <!-- Candlestick 3: Tall High Impulse Bar Right -->
+    <!-- Wick -->
+    <path
+        android:pathData="M71,28 L71,64"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FEF08A" />
+    <!-- Body -->
+    <path
+        android:pathData="M68,32 L74,32 L74,50 L68,50 Z"
+        android:fillColor="#FEF08A" />
+
+    <!-- Quant AI Neural Indicator Arc & Nodes -->
+    <path
+        android:pathData="M37,44 Q54,30 71,28"
+        android:strokeWidth="2.0"
+        android:strokeColor="#FFFFFF" />
+        
+    <!-- Node Sparks -->
+    <path
+        android:pathData="M71,28 m -3,0 a 3,3 0 1,0 6,0 a 3,3 0 1,0 -6,0"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M54,35 m -2.5,0 a 2.5,2.5 0 1,0 5,0 a 2.5,2.5 0 1,0 -5,0"
+        android:fillColor="#FDE68A" />
+    <path
+        android:pathData="M37,45 m -2,0 a 2,2 0 1,0 4,0 a 2,2 0 1,0 -4,0"
+        android:fillColor="#F59E0B" />
+</vector>

@@ -1,0 +1,6 @@
+{
+  "name": "Gold AI Analyst",
+  "description": "Production-ready XAUUSD Gold Quant & AI Financial Analyst with real-time indicators, signals, backtesting, and Gemini High Thinking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
