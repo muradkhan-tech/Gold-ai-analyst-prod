@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.GoldViewModel
 import com.example.ui.TerminalTab
 import com.example.quant.SilentLiquidityReport
+import com.example.ui.auth.SignInScreen
 import com.example.ui.components.ActiveSignalCard
 import com.example.ui.components.BacktestScreen
 import com.example.ui.components.CandlestickChart
@@ -109,6 +110,12 @@ fun GoldAppContent(viewModel: GoldViewModel) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val adminDevMessages by viewModel.adminDevChatMessages.collectAsStateWithLifecycle()
     val isAdminDevThinking by viewModel.isAdminDevThinking.collectAsStateWithLifecycle()
+    val firebaseUser by viewModel.firebaseUser.collectAsStateWithLifecycle()
+
+    if (firebaseUser == null) {
+        SignInScreen()
+        return
+    }
 
     Scaffold(
         modifier = Modifier
@@ -214,6 +221,8 @@ fun GoldAppContent(viewModel: GoldViewModel) {
                             isAlertSoundEnabled = isAlertSoundEnabled,
                             onToggleAlertSound = { viewModel.setAlertSoundEnabled(it) },
                             currentUser = currentUser,
+                            firebaseUser = firebaseUser,
+                            onSignOut = { viewModel.signOut() },
                             adminDevMessages = adminDevMessages,
                             isAdminDevThinking = isAdminDevThinking,
                             onSendAdminDevMessage = { viewModel.sendAdminDevChatMessage(it) }

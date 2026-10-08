@@ -1,0 +1,179 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with role-based access and platform preferences",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique Google Auth user ID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User Google email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["SUPER_ADMIN", "VIEWER"],
+          "description": "User security authorization role"
+        },
+        "riskTolerance": {
+          "type": "string",
+          "enum": ["LOW", "MEDIUM", "HIGH", "INSTITUTIONAL"],
+          "description": "User risk management tolerance level"
+        },
+        "alertSoundEnabled": {
+          "type": "boolean",
+          "description": "Audio alerts toggle"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp"
+        }
+      },
+      "required": ["userId", "email", "role"]
+    },
+    "PriceAlert": {
+      "title": "PriceAlert",
+      "description": "Cloud-synced spot price alert target",
+      "type": "object",
+      "properties": {
+        "alertId": {
+          "type": "string",
+          "description": "Unique alert identifier"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "targetPrice": {
+          "type": "number",
+          "description": "Trigger price threshold in USD"
+        },
+        "condition": {
+          "type": "string",
+          "enum": ["ABOVE", "BELOW"],
+          "description": "Threshold trigger condition"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["BID", "ASK", "SPOT"],
+          "description": "Quote price type monitored"
+        },
+        "note": {
+          "type": "string",
+          "description": "User alert notes"
+        },
+        "triggered": {
+          "type": "boolean",
+          "description": "Whether the alert has been hit"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Creation timestamp in millis"
+        }
+      },
+      "required": ["alertId", "userId", "targetPrice", "condition", "type", "triggered", "createdAt"]
+    },
+    "SimulatedTrade": {
+      "title": "SimulatedTrade",
+      "description": "Cloud-synchronized simulated trade event",
+      "type": "object",
+      "properties": {
+        "tradeId": {
+          "type": "string",
+          "description": "Unique trade execution identifier"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["1m", "3m", "5m", "10m", "15m", "1h"],
+          "description": "Execution signal timeframe"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["BUY", "SELL"],
+          "description": "Order direction"
+        },
+        "lots": {
+          "type": "number",
+          "description": "Execution lot size"
+        },
+        "entryPrice": {
+          "type": "number",
+          "description": "Execution entry price in USD"
+        },
+        "stopLoss": {
+          "type": "number",
+          "description": "Stop loss price in USD"
+        },
+        "takeProfit1": {
+          "type": "number",
+          "description": "Primary profit target"
+        },
+        "takeProfit2": {
+          "type": "number",
+          "description": "Secondary profit target"
+        },
+        "exitPrice": {
+          "type": "number",
+          "description": "Exit fill price if closed"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["OPEN", "TP1_HIT", "TP2_HIT", "SL_HIT", "MANUAL_CLOSE"],
+          "description": "Current order lifecycle state"
+        },
+        "pnlDollar": {
+          "type": "number",
+          "description": "Profit or loss in USD"
+        },
+        "pnlPips": {
+          "type": "number",
+          "description": "Profit or loss in pips"
+        },
+        "signalReason": {
+          "type": "string",
+          "description": "Confluence reasoning rationale"
+        },
+        "entryTime": {
+          "type": "integer",
+          "description": "Entry execution timestamp in millis"
+        },
+        "exitTime": {
+          "type": "integer",
+          "description": "Exit timestamp in millis"
+        }
+      },
+      "required": ["tradeId", "userId", "timeframe", "direction", "lots", "entryPrice", "stopLoss", "takeProfit1", "takeProfit2", "status", "pnlDollar", "pnlPips", "entryTime"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "UserProfile"
+      },
+      "description": "Authenticated user profile documents"
+    },
+    "/users/{userId}/price_alerts/{alertId}": {
+      "schema": {
+        "$ref": "PriceAlert"
+      },
+      "description": "User specific real-time price alerts"
+    },
+    "/users/{userId}/trades/{tradeId}": {
+      "schema": {
+        "$ref": "SimulatedTrade"
+      },
+      "description": "User live and historical simulated trades"
+    }
+  }
+}

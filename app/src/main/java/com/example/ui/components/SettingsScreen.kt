@@ -77,6 +77,8 @@ fun SettingsScreen(
     isAlertSoundEnabled: Boolean = true,
     onToggleAlertSound: ((Boolean) -> Unit)? = null,
     currentUser: UserProfileEntity? = null,
+    firebaseUser: com.google.firebase.auth.FirebaseUser? = null,
+    onSignOut: () -> Unit = {},
     adminDevMessages: List<ChatMessage> = emptyList(),
     isAdminDevThinking: Boolean = false,
     onSendAdminDevMessage: ((String) -> Unit)? = null,
@@ -110,6 +112,95 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        // 0. FIREBASE CLOUD & AUTHENTICATION IDENTITY CARD
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                    .padding(14.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Firebase Cloud Auth",
+                                tint = BullishGreen,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Firebase Cloud Identity",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(BullishGreen.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = "ZERO-TRUST ACTIVE",
+                                color = BullishGreen,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Google Account: ${firebaseUser?.email ?: "Operator Authenticated"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "User UID: ${firebaseUser?.uid ?: "N/A"}",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Firestore Database ID: ai-studio-android-goldaian-d175b8d9-ebfd-43e2-ba70-db0789d50d88",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = GoldPrimary
+                        )
+                    }
+
+                    Button(
+                        onClick = onSignOut,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    ) {
+                        Text(
+                            text = "Sign Out from Terminal",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
 

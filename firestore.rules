@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(userId) {
+      let data = request.resource.data;
+      return data.userId == userId &&
+             data.email is string &&
+             data.role in ['SUPER_ADMIN', 'VIEWER'] &&
+             (!('displayName' in data) || data.displayName is string) &&
+             (!('riskTolerance' in data) || data.riskTolerance in ['LOW', 'MEDIUM', 'HIGH', 'INSTITUTIONAL']) &&
+             (!('alertSoundEnabled' in data) || data.alertSoundEnabled is bool);
+    }
+
+    function isValidPriceAlert(userId) {
+      let data = request.resource.data;
+      return data.userId == userId &&
+             data.alertId is string &&
+             data.targetPrice is number && data.targetPrice > 0 &&
+             data.condition in ['ABOVE', 'BELOW'] &&
+             data.type in ['BID', 'ASK', 'SPOT'] &&
+             data.triggered is bool &&
+             data.createdAt is int;
+    }
+
+    function isValidSimulatedTrade(userId) {
+      let data = request.resource.data;
+      return data.userId == userId &&
+             data.tradeId is string &&
+             data.timeframe in ['1m', '3m', '5m', '10m', '15m', '1h'] &&
+             data.direction in ['BUY', 'SELL'] &&
+             data.lots is number && data.lots > 0 &&
+             data.entryPrice is number && data.entryPrice > 0 &&
+             data.stopLoss is number && data.stopLoss > 0 &&
+             data.takeProfit1 is number && data.takeProfit1 > 0 &&
+             data.takeProfit2 is number && data.takeProfit2 > 0 &&
+             data.status in ['OPEN', 'TP1_HIT', 'TP2_HIT', 'SL_HIT', 'MANUAL_CLOSE'] &&
+             data.pnlDollar is number &&
+             data.pnlPips is number &&
+             data.entryTime is int;
+    }
+
+    // User profile documents
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserProfile(userId);
+      allow update: if isOwner(userId) && isValidUserProfile(userId) &&
+                       request.resource.data.userId == resource.data.userId;
+      allow delete: if isOwner(userId);
+
+      // User price alerts subcollection
+      match /price_alerts/{alertId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidPriceAlert(userId);
+        allow update: if isOwner(userId) && isValidPriceAlert(userId) &&
+                         request.resource.data.userId == resource.data.userId;
+        allow delete: if isOwner(userId);
+      }
+
+      // User simulated trades subcollection
+      match /trades/{tradeId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSimulatedTrade(userId);
+        allow update: if isOwner(userId) && isValidSimulatedTrade(userId) &&
+                         request.resource.data.userId == resource.data.userId;
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

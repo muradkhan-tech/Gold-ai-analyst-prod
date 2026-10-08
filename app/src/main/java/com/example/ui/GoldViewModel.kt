@@ -25,13 +25,19 @@ import com.example.quant.QuantCalculations
 import com.example.quant.TechnicalSnapshot
 import com.example.quant.SilentLiquidityEngine
 import com.example.quant.SilentLiquidityReport
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -122,6 +128,20 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
 
     val currentUser: StateFlow<UserProfileEntity?> = repository.currentUser
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val auth: FirebaseAuth = Firebase.auth
+
+    val firebaseUser: StateFlow<FirebaseUser?> = callbackFlow {
+        val listener = FirebaseAuth.AuthStateListener { authState ->
+            trySend(authState.currentUser)
+        }
+        auth.addAuthStateListener(listener)
+        awaitClose { auth.removeAuthStateListener(listener) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), auth.currentUser)
+
+    fun signOut() {
+        auth.signOut()
+    }
 
     // Embedded Developer Assistant (Admin Only) Chat State
     private val _adminDevChatMessages = MutableStateFlow<List<ChatMessage>>(
