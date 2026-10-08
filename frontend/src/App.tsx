@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import TradingViewWidget from './components/TradingViewWidget';
+import { LiveTradesView, LiveTrade } from './components/LiveTradesView';
 
-type TabType = 'signals' | 'chart' | 'ai_news' | 'calendar' | 'settings';
+type TabType = 'signals' | 'chart' | 'trades' | 'ai_news' | 'calendar' | 'settings';
 type TimeframeType = '1m' | '3m' | '5m' | '10m' | '15m' | '1h';
 type DirectionType = 'STRONG BUY' | 'BUY' | 'WEAK BUY' | 'WAIT' | 'WEAK SELL' | 'SELL' | 'STRONG SELL';
 
@@ -134,20 +135,25 @@ function playAlertChime() {
   }
 }
 
-// IndexedDB Cache for Instant (0ms) Chart Startup
+// IndexedDB Cache for Instant (0ms) Chart Startup & Live Trades Persistence
 const DB_NAME = 'GoldAiAnalystDB';
+const DB_VERSION = 2;
 const STORE_NAME = 'market_candles';
+const TRADES_STORE_NAME = 'live_simulated_trades';
 
 function openIndexedDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
       return reject('IndexedDB not supported');
     }
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = (e: any) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'timeframe' });
+      }
+      if (!db.objectStoreNames.contains(TRADES_STORE_NAME)) {
+        db.createObjectStore(TRADES_STORE_NAME, { keyPath: 'id' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -178,6 +184,97 @@ async function loadCandlesFromIndexedDB(timeframe: string): Promise<CandleData[]
     return null;
   }
 }
+
+async function saveAllTradesToIndexedDB(trades: LiveTrade[]) {
+  try {
+    const db = await openIndexedDB();
+    const tx = db.transaction(TRADES_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(TRADES_STORE_NAME);
+    trades.forEach(t => store.put(t));
+  } catch (err) {
+    // Graceful fallback
+  }
+}
+
+async function loadTradesFromIndexedDB(): Promise<LiveTrade[]> {
+  try {
+    const db = await openIndexedDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(TRADES_STORE_NAME, 'readonly');
+      const store = tx.objectStore(TRADES_STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+async function clearTradesFromIndexedDB() {
+  try {
+    const db = await openIndexedDB();
+    const tx = db.transaction(TRADES_STORE_NAME, 'readwrite');
+    tx.objectStore(TRADES_STORE_NAME).clear();
+  } catch (err) {}
+}
+
+const initialSeedTrades: LiveTrade[] = [
+  {
+    id: 'trade-seed-1',
+    timeframe: '15m',
+    direction: 'BUY',
+    lots: 1.0,
+    entryPrice: 2854.20,
+    entryTime: Date.now() - 5400000,
+    stopLoss: 2848.50,
+    takeProfit1: 2862.00,
+    takeProfit2: 2868.50,
+    exitPrice: 2862.00,
+    exitTime: Date.now() - 3600000,
+    status: 'TP1_HIT',
+    pnlDollar: 780.00,
+    pnlPips: 78.0,
+    riskReward: 2.1,
+    signalReason: 'EMA 8/21 Ribbon expansion & Bullish VSA Absorption'
+  },
+  {
+    id: 'trade-seed-2',
+    timeframe: '5m',
+    direction: 'BUY',
+    lots: 1.0,
+    entryPrice: 2858.00,
+    entryTime: Date.now() - 3200000,
+    stopLoss: 2853.00,
+    takeProfit1: 2865.50,
+    takeProfit2: 2871.00,
+    exitPrice: 2871.00,
+    exitTime: Date.now() - 1400000,
+    status: 'TP2_HIT',
+    pnlDollar: 1300.00,
+    pnlPips: 130.0,
+    riskReward: 2.6,
+    signalReason: 'Asian Range Liquidity Purge confirmed rejection'
+  },
+  {
+    id: 'trade-seed-3',
+    timeframe: '1m',
+    direction: 'SELL',
+    lots: 1.0,
+    entryPrice: 2866.50,
+    entryTime: Date.now() - 900000,
+    stopLoss: 2869.50,
+    takeProfit1: 2862.00,
+    takeProfit2: 2858.00,
+    exitPrice: 2869.50,
+    exitTime: Date.now() - 450000,
+    status: 'SL_HIT',
+    pnlDollar: -300.00,
+    pnlPips: -30.0,
+    riskReward: 1.5,
+    signalReason: 'Counter-trend 1m micro scalp'
+  }
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('signals');
@@ -775,6 +872,273 @@ export default function App() {
     }, 1200);
   };
 
+  // =========================================================================
+  // LIVE SIMULATED TRADES STATE & AUTOMATIC INDEXEDDB PERSISTENCE
+  // =========================================================================
+  const [trades, setTrades] = useState<LiveTrade[]>([]);
+  const [autoExecuteEnabled, setAutoExecuteEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('gold_ai_auto_execute') !== 'false';
+  });
+
+  // Load trades from local IndexedDB on startup
+  useEffect(() => {
+    loadTradesFromIndexedDB().then((saved) => {
+      if (saved && saved.length > 0) {
+        setTrades(saved);
+      } else {
+        setTrades(initialSeedTrades);
+        saveAllTradesToIndexedDB(initialSeedTrades);
+      }
+    });
+  }, []);
+
+  // Save trades to local IndexedDB whenever updated
+  useEffect(() => {
+    if (trades.length > 0) {
+      saveAllTradesToIndexedDB(trades);
+    }
+  }, [trades]);
+
+  // Save autoExecute preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('gold_ai_auto_execute', String(autoExecuteEnabled));
+  }, [autoExecuteEnabled]);
+
+  // Monitor live Bid/Ask ticks: calculate floating PnL & evaluate automated exits (TP1, TP2, SL)
+  useEffect(() => {
+    setTrades(prevTrades => {
+      let changed = false;
+      const updated = prevTrades.map(trade => {
+        if (trade.status !== 'OPEN') return trade;
+
+        const isBuy = trade.direction === 'BUY';
+        const currentRefPrice = isBuy ? bid : ask;
+
+        // 1. Evaluate TP2 Target
+        if (isBuy && currentRefPrice >= trade.takeProfit2) {
+          changed = true;
+          const pnl = (trade.takeProfit2 - trade.entryPrice) * 100 * trade.lots;
+          if (soundAlertsEnabled) playAlertChime();
+          return {
+            ...trade,
+            status: 'TP2_HIT' as const,
+            exitPrice: trade.takeProfit2,
+            exitTime: Date.now(),
+            pnlDollar: pnl,
+            pnlPips: (trade.takeProfit2 - trade.entryPrice) * 10
+          };
+        }
+        if (!isBuy && currentRefPrice <= trade.takeProfit2) {
+          changed = true;
+          const pnl = (trade.entryPrice - trade.takeProfit2) * 100 * trade.lots;
+          if (soundAlertsEnabled) playAlertChime();
+          return {
+            ...trade,
+            status: 'TP2_HIT' as const,
+            exitPrice: trade.takeProfit2,
+            exitTime: Date.now(),
+            pnlDollar: pnl,
+            pnlPips: (trade.entryPrice - trade.takeProfit2) * 10
+          };
+        }
+
+        // 2. Evaluate TP1 Target
+        if (isBuy && currentRefPrice >= trade.takeProfit1) {
+          changed = true;
+          const pnl = (trade.takeProfit1 - trade.entryPrice) * 100 * trade.lots;
+          if (soundAlertsEnabled) playAlertChime();
+          return {
+            ...trade,
+            status: 'TP1_HIT' as const,
+            exitPrice: trade.takeProfit1,
+            exitTime: Date.now(),
+            pnlDollar: pnl,
+            pnlPips: (trade.takeProfit1 - trade.entryPrice) * 10
+          };
+        }
+        if (!isBuy && currentRefPrice <= trade.takeProfit1) {
+          changed = true;
+          const pnl = (trade.entryPrice - trade.takeProfit1) * 100 * trade.lots;
+          if (soundAlertsEnabled) playAlertChime();
+          return {
+            ...trade,
+            status: 'TP1_HIT' as const,
+            exitPrice: trade.takeProfit1,
+            exitTime: Date.now(),
+            pnlDollar: pnl,
+            pnlPips: (trade.entryPrice - trade.takeProfit1) * 10
+          };
+        }
+
+        // 3. Evaluate Stop Loss Breach
+        if (isBuy && currentRefPrice <= trade.stopLoss) {
+          changed = true;
+          const pnl = (trade.stopLoss - trade.entryPrice) * 100 * trade.lots;
+          return {
+            ...trade,
+            status: 'SL_HIT' as const,
+            exitPrice: trade.stopLoss,
+            exitTime: Date.now(),
+            pnlDollar: pnl,
+            pnlPips: (trade.stopLoss - trade.entryPrice) * 10
+          };
+        }
+        if (!isBuy && currentRefPrice >= trade.stopLoss) {
+          changed = true;
+          const pnl = (trade.entryPrice - trade.stopLoss) * 100 * trade.lots;
+          return {
+            ...trade,
+            status: 'SL_HIT' as const,
+            exitPrice: trade.stopLoss,
+            exitTime: Date.now(),
+            pnlDollar: pnl,
+            pnlPips: (trade.entryPrice - trade.stopLoss) * 10
+          };
+        }
+
+        // 4. Update Floating PnL
+        const floatingDollar = isBuy
+          ? (bid - trade.entryPrice) * 100 * trade.lots
+          : (trade.entryPrice - ask) * 100 * trade.lots;
+        const floatingPips = isBuy
+          ? (bid - trade.entryPrice) * 10
+          : (trade.entryPrice - ask) * 10;
+
+        if (Math.abs(trade.pnlDollar - floatingDollar) > 0.05) {
+          changed = true;
+          return {
+            ...trade,
+            pnlDollar: floatingDollar,
+            pnlPips: floatingPips
+          };
+        }
+
+        return trade;
+      });
+
+      return changed ? updated : prevTrades;
+    });
+  }, [bid, ask, soundAlertsEnabled]);
+
+  // Automatically log simulated trade entries from active signals
+  useEffect(() => {
+    if (!autoExecuteEnabled) return;
+
+    // Limit maximum concurrent open simulated trades to 3
+    const openTrades = trades.filter(t => t.status === 'OPEN');
+    if (openTrades.length >= 3) return;
+
+    // Pick top-conviction active signal
+    const candidateSignal = signalsData.find(s => s.direction.includes('BUY') || s.direction.includes('SELL'));
+    if (!candidateSignal) return;
+
+    const isBuy = candidateSignal.direction.includes('BUY');
+    const existingForTf = trades.some(t => 
+      t.timeframe === candidateSignal.timeframe &&
+      t.direction === (isBuy ? 'BUY' : 'SELL') &&
+      (t.status === 'OPEN' || Date.now() - t.entryTime < 300000)
+    );
+
+    if (!existingForTf) {
+      const entryP = isBuy ? ask : bid;
+      const autoTrade: LiveTrade = {
+        id: `trade-auto-${Date.now()}`,
+        timeframe: candidateSignal.timeframe,
+        direction: isBuy ? 'BUY' : 'SELL',
+        lots: 1.0,
+        entryPrice: entryP,
+        entryTime: Date.now(),
+        stopLoss: candidateSignal.stopLoss,
+        takeProfit1: candidateSignal.takeProfit1,
+        takeProfit2: candidateSignal.takeProfit2,
+        status: 'OPEN',
+        pnlDollar: 0.0,
+        pnlPips: 0.0,
+        riskReward: candidateSignal.riskReward,
+        signalReason: candidateSignal.summary
+      };
+
+      setTrades(prev => [autoTrade, ...prev]);
+      if (soundAlertsEnabled) playAlertChime();
+    }
+  }, [autoExecuteEnabled, signalsData, trades, ask, bid, soundAlertsEnabled]);
+
+  const handleCloseTrade = useCallback((tradeId: string) => {
+    setTrades(prev => prev.map(t => {
+      if (t.id !== tradeId || t.status !== 'OPEN') return t;
+      const isBuy = t.direction === 'BUY';
+      const exitP = isBuy ? bid : ask;
+      const finalPnl = isBuy ? (exitP - t.entryPrice) * 100 * t.lots : (t.entryPrice - exitP) * 100 * t.lots;
+      return {
+        ...t,
+        status: 'MANUAL_CLOSE',
+        exitPrice: exitP,
+        exitTime: Date.now(),
+        pnlDollar: finalPnl,
+        pnlPips: isBuy ? (exitP - t.entryPrice) * 10 : (t.entryPrice - exitP) * 10
+      };
+    }));
+  }, [bid, ask]);
+
+  const handleCloseAllTrades = useCallback(() => {
+    setTrades(prev => prev.map(t => {
+      if (t.status !== 'OPEN') return t;
+      const isBuy = t.direction === 'BUY';
+      const exitP = isBuy ? bid : ask;
+      const finalPnl = isBuy ? (exitP - t.entryPrice) * 100 * t.lots : (t.entryPrice - exitP) * 100 * t.lots;
+      return {
+        ...t,
+        status: 'MANUAL_CLOSE',
+        exitPrice: exitP,
+        exitTime: Date.now(),
+        pnlDollar: finalPnl,
+        pnlPips: isBuy ? (exitP - t.entryPrice) * 10 : (t.entryPrice - exitP) * 10
+      };
+    }));
+  }, [bid, ask]);
+
+  const handleManualOrder = useCallback((direction: 'BUY' | 'SELL', lots: number = 1.0) => {
+    const isBuy = direction === 'BUY';
+    const entryP = isBuy ? ask : bid;
+    const atrApprox = 12.0;
+    const sl = isBuy ? +(entryP - atrApprox).toFixed(2) : +(entryP + atrApprox).toFixed(2);
+    const tp1 = isBuy ? +(entryP + (atrApprox * 1.5)).toFixed(2) : +(entryP - (atrApprox * 1.5)).toFixed(2);
+    const tp2 = isBuy ? +(entryP + (atrApprox * 2.5)).toFixed(2) : +(entryP - (atrApprox * 2.5)).toFixed(2);
+
+    const manualTrade: LiveTrade = {
+      id: `trade-manual-${Date.now()}`,
+      timeframe: selectedTimeframe,
+      direction,
+      lots,
+      entryPrice: entryP,
+      entryTime: Date.now(),
+      stopLoss: sl,
+      takeProfit1: tp1,
+      takeProfit2: tp2,
+      status: 'OPEN',
+      pnlDollar: 0.0,
+      pnlPips: 0.0,
+      riskReward: 2.0,
+      signalReason: `Manual operator market execution (${lots} lot @ $${entryP.toFixed(2)})`
+    };
+
+    setTrades(prev => [manualTrade, ...prev]);
+    if (soundAlertsEnabled) playAlertChime();
+    setSaveToast(`Executed ${direction} ${lots} Lot @ $${entryP.toFixed(2)}`);
+    setTimeout(() => setSaveToast(null), 2500);
+  }, [ask, bid, selectedTimeframe, soundAlertsEnabled]);
+
+  const handleClearTradesHistory = useCallback(async () => {
+    await clearTradesFromIndexedDB();
+    setTrades([]);
+    setSaveToast('Simulated trades history cleared from local IndexedDB.');
+    setTimeout(() => setSaveToast(null), 2500);
+  }, []);
+
+  const openTradesCount = useMemo(() => {
+    return trades.filter(t => t.status === 'OPEN').length;
+  }, [trades]);
+
   const getDirectionBadge = (dir: DirectionType) => {
     if (dir === 'STRONG BUY') {
       return 'bg-emerald-600 text-white font-extrabold shadow-xs';
@@ -890,6 +1254,26 @@ export default function App() {
         {/* ===================== TAB 1: SIGNALS ===================== */}
         {activeTab === 'signals' && (
           <div className="space-y-3">
+            {/* Live Auto-Trader Status Bar */}
+            <div className="bg-gradient-to-r from-slate-900 to-blue-950 text-white rounded-xl p-3 border border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs font-mono font-bold">
+                  Auto-Trader: {autoExecuteEnabled ? 'ACTIVE' : 'PAUSED'}
+                </span>
+                <span className="text-[11px] text-slate-300 font-mono">
+                  • {openTradesCount} Active Position{openTradesCount === 1 ? '' : 's'} (IndexedDB)
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveTab('trades')}
+                className="px-2.5 py-1 text-xs font-mono font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors flex items-center gap-1 shadow-xs"
+              >
+                <span>💼 View Live Trades</span>
+                <span>→</span>
+              </button>
+            </div>
+
             {/* Primary Consensus Signal Hero Card */}
             <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
@@ -1368,6 +1752,22 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ===================== TAB: LIVE TRADES & PERFORMANCE ===================== */}
+        {activeTab === 'trades' && (
+          <LiveTradesView
+            currentPrice={price}
+            bid={bid}
+            ask={ask}
+            trades={trades}
+            autoExecuteEnabled={autoExecuteEnabled}
+            onToggleAutoExecute={setAutoExecuteEnabled}
+            onCloseTrade={handleCloseTrade}
+            onCloseAllTrades={handleCloseAllTrades}
+            onManualOrder={handleManualOrder}
+            onClearHistory={handleClearTradesHistory}
+          />
         )}
 
         {/* ===================== TAB 3: AI & NEWS ===================== */}
@@ -1850,6 +2250,23 @@ export default function App() {
         >
           <span className="text-sm">📈</span>
           <span>Live Chart</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('trades')}
+          className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold flex flex-col items-center gap-0.5 transition-all relative ${
+            activeTab === 'trades' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <div className="relative">
+            <span className="text-sm">💼</span>
+            {openTradesCount > 0 && (
+              <span className="absolute -top-1 -right-2.5 bg-emerald-500 text-white text-[9px] font-extrabold px-1 rounded-full leading-tight">
+                {openTradesCount}
+              </span>
+            )}
+          </div>
+          <span>Trades</span>
         </button>
 
         <button
