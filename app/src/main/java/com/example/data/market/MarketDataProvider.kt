@@ -13,9 +13,106 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
 
+import com.example.data.local.MarketTickEntity
+
 interface MarketDataProvider {
     val name: String
     suspend fun fetch1mCandles(symbol: String = "XAUUSD", limit: Int = 120): Result<List<CandleEntity>>
+}
+
+class BinancePaxgProvider(
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .build()
+) : MarketDataProvider {
+
+    override val name: String = "Binance Spot (PAXGUSDT - 1:1 Physical Gold)"
+
+    suspend fun fetchTicker(): Result<MarketTickEntity> = withContext(Dispatchers.IO) {
+        val urls = listOf(
+            "https://api.binance.com/api/v3/ticker/bookTicker?symbol=PAXGUSDT",
+            "https://data-api.binance.vision/api/v3/ticker/bookTicker?symbol=PAXGUSDT"
+        )
+        for (url in urls) {
+            try {
+                val req = Request.Builder().url(url).header("User-Agent", "GoldAiAnalyst/2.0").build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                val obj = JSONObject(body)
+                val bid = obj.getDouble("bidPrice")
+                val ask = obj.getDouble("askPrice")
+                if (bid <= 0.0 || ask <= 0.0) continue
+                val mid = round((bid + ask) / 2.0 * 100.0) / 100.0
+                val rawSpread = round((ask - bid) * 100.0) / 100.0
+                val spread = max(rawSpread, 0.05)
+                val vol = round((obj.optDouble("bidQty", 1.0) + obj.optDouble("askQty", 1.0)) * 100.0) / 100.0
+
+                return@withContext Result.success(
+                    MarketTickEntity(
+                        symbol = "XAUUSD",
+                        price = mid,
+                        bid = round(bid * 100.0) / 100.0,
+                        ask = round(ask * 100.0) / 100.0,
+                        spread = spread,
+                        volume = vol,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            } catch (e: Exception) {
+                continue
+            }
+        }
+        Result.failure(Exception("Binance PAXGUSDT bookTicker request failed"))
+    }
+
+    override suspend fun fetch1mCandles(symbol: String, limit: Int): Result<List<CandleEntity>> = withContext(Dispatchers.IO) {
+        val urls = listOf(
+            "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=$limit",
+            "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=$limit"
+        )
+        for (url in urls) {
+            try {
+                val req = Request.Builder().url(url).header("User-Agent", "GoldAiAnalyst/2.0").build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                val arr = org.json.JSONArray(body)
+                if (arr.length() == 0) continue
+
+                val candles = mutableListOf<CandleEntity>()
+                for (i in 0 until arr.length()) {
+                    val kline = arr.getJSONArray(i)
+                    val ts = kline.getLong(0)
+                    val o = kline.getDouble(1)
+                    val h = kline.getDouble(2)
+                    val l = kline.getDouble(3)
+                    val c = kline.getDouble(4)
+                    val v = kline.getDouble(5)
+
+                    candles.add(
+                        CandleEntity(
+                            symbol = symbol,
+                            timeframe = "1m",
+                            timestamp = ts,
+                            open = round(o * 100.0) / 100.0,
+                            high = round(h * 100.0) / 100.0,
+                            low = round(l * 100.0) / 100.0,
+                            close = round(c * 100.0) / 100.0,
+                            volume = round(v * 100.0) / 100.0
+                        )
+                    )
+                }
+                if (candles.isNotEmpty()) {
+                    return@withContext Result.success(candles)
+                }
+            } catch (e: Exception) {
+                continue
+            }
+        }
+        Result.failure(Exception("Binance PAXGUSDT klines request failed"))
+    }
 }
 
 class YahooFinanceProvider(

@@ -18,6 +18,9 @@ interface MarketTickDao {
     @Query("SELECT * FROM market_ticks WHERE symbol = :symbol ORDER BY timestamp DESC LIMIT 1")
     fun getLatestTick(symbol: String = "XAUUSD"): Flow<MarketTickEntity?>
 
+    @Query("SELECT * FROM market_ticks WHERE symbol = :symbol ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestTickSnapshot(symbol: String = "XAUUSD"): MarketTickEntity?
+
     @Query("DELETE FROM market_ticks WHERE id NOT IN (SELECT id FROM market_ticks ORDER BY timestamp DESC LIMIT 200)")
     suspend fun pruneOldTicks()
 }
@@ -62,6 +65,15 @@ interface SignalDao {
 
     @Query("UPDATE signals SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String)
+
+    @Query("DELETE FROM signals WHERE status != 'PENDING' AND status != 'ACTIVE' AND timestamp < :cutoffTimestamp")
+    suspend fun cleanHistoricalSignals(cutoffTimestamp: Long): Int
+
+    @Query("DELETE FROM signals WHERE confidenceScore = 0.0 OR (status = 'PENDING' AND timestamp < :orphanedCutoff)")
+    suspend fun clearGarbageFailedData(orphanedCutoff: Long): Int
+
+    @Query("DELETE FROM signals")
+    suspend fun wipeAllTestData(): Int
 }
 
 @Dao

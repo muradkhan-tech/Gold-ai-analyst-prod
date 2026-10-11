@@ -41,7 +41,8 @@ data class DeltaPressureMetrics(
     val sellingAggressionPct: Double, // 0 to 100%
     val isExhaustionDivergence: Boolean,
     val divergenceType: String? = null, // "BEARISH_EXHAUSTION" or "BULLISH_EXHAUSTION"
-    val divergenceDetails: String? = null
+    val divergenceDetails: String? = null,
+    val dominantParty: String = if (buyingAggressionPct >= sellingAggressionPct) "Net Buyers" else "Net Sellers"
 )
 
 data class AsianSessionRange(
@@ -126,17 +127,19 @@ object SilentLiquidityEngine {
         // ====================================================================
         // SILENT EDGE 1: INSTITUTIONAL VOLUME ABSORPTION & SPREAD EXHAUSTION
         // ====================================================================
-        val lookback20 = candles.takeLast(20)
+        val lookback20 = candles.takeLast(min(20, candles.size))
         val avgVolume20 = if (lookback20.isNotEmpty()) lookback20.map { it.volume }.average() else 100.0
-        val atr20 = QuantCalculations.calculateAtr(candles, 20).lastOrNull() ?: 8.0
+        val atr14List = QuantCalculations.calculateAtr(candles, 14)
+        val atr14 = atr14List.lastOrNull() ?: 8.0
 
         val lastCandle = candles.last()
         val currentSpread = lastCandle.high - lastCandle.low
         val volumeRatio = if (avgVolume20 > 0.0) lastCandle.volume / avgVolume20 else 1.0
-        val spreadToAtrRatio = if (atr20 > 0.0) currentSpread / atr20 else 1.0
+        val spreadToAtrRatio = if (atr14 > 0.0) currentSpread / atr14 else 1.0
 
-        // Absorption Trap Condition: Volume >= 2.0x avg volume AND Spread <= 0.5x ATR
-        val isAbsorption = (volumeRatio >= 2.0 && spreadToAtrRatio <= 0.5 && currentSpread > 0.0)
+        // Institutional Flow: VSA Institutional Absorption
+        // Formula: If tick volume > 2.0x 20-period volume SMA AND candle spread (High - Low) < 0.5x 20-period ATR(14), flag as 'INSTITUTIONAL_ABSORPTION' (Status: ACTIVE). Otherwise, 'INACTIVE'.
+        val isAbsorption = (volumeRatio > 2.0 && currentSpread < (0.5 * atr14) && currentSpread > 0.0)
 
         // Classify absorption direction based on candle position within the recent 20-bar range
         val recentHigh = lookback20.maxOfOrNull { it.high } ?: lastCandle.high
@@ -149,17 +152,17 @@ object SilentLiquidityEngine {
         if (isAbsorption) {
             if (relativePosition >= 0.60) {
                 absorptionType = AbsorptionType.BEARISH_ABSORPTION
-                absorptionDetails = "BEARISH ABSORPTION: Institutional limit sell orders trapped retail breakout buyers. Volume ${round1(volumeRatio)}x avg into ultra-tight spread (${round1(spreadToAtrRatio)}x ATR) at swing highs."
+                absorptionDetails = "INSTITUTIONAL_ABSORPTION (Status: ACTIVE): Institutional limit sell orders trapped retail breakout buyers at highs. Vol: ${round1(volumeRatio)}x avg (> 2.0x SMA), Spread: ${round2(currentSpread)} (< 0.5x ATR ${round2(atr14)})."
             } else if (relativePosition <= 0.40) {
                 absorptionType = AbsorptionType.BULLISH_ABSORPTION
-                absorptionDetails = "BULLISH ABSORPTION: Institutional limit buy orders absorbed panic sellers. Volume ${round1(volumeRatio)}x avg into ultra-tight spread (${round1(spreadToAtrRatio)}x ATR) at swing lows."
+                absorptionDetails = "INSTITUTIONAL_ABSORPTION (Status: ACTIVE): Institutional limit buy orders absorbed panic sellers at lows. Vol: ${round1(volumeRatio)}x avg (> 2.0x SMA), Spread: ${round2(currentSpread)} (< 0.5x ATR ${round2(atr14)})."
             } else {
                 absorptionType = if (lastCandle.close >= lastCandle.open) AbsorptionType.BEARISH_ABSORPTION else AbsorptionType.BULLISH_ABSORPTION
-                absorptionDetails = "INSTITUTIONAL ABSORPTION: High volume (${round1(volumeRatio)}x) absorbed in tight compression (${round1(spreadToAtrRatio)}x ATR)."
+                absorptionDetails = "INSTITUTIONAL_ABSORPTION (Status: ACTIVE): High volume absorption (${round1(volumeRatio)}x > 2.0x SMA) in compression spread (${round2(currentSpread)} < 0.5x ATR)."
             }
         } else {
             absorptionType = AbsorptionType.NONE
-            absorptionDetails = "Normal volume/spread relationship (Vol: ${round1(volumeRatio)}x, Spread: ${round1(spreadToAtrRatio)}x ATR)."
+            absorptionDetails = "INSTITUTIONAL_ABSORPTION (Status: INACTIVE): Normal volume/spread dynamics (Vol: ${round1(volumeRatio)}x, Spread: ${round2(currentSpread)})."
         }
 
         // ====================================================================
@@ -168,48 +171,38 @@ object SilentLiquidityEngine {
         val asianRange = computeAsianSessionRange(candles, referenceTimestamp)
         var sweepStatus = LiquiditySweepStatus.WITHIN_RANGE
         var sweepTag: String? = null
-        var sweepDetails = "Price trading safely within Asian session baseline boundaries."
+        var sweepDetails = "WITHIN RANGE (Asian H: $${round2(asianRange.high)} | L: $${round2(asianRange.low)})"
 
         if (asianRange.valid) {
-            val currentPrice = lastCandle.close
             val currentHigh = lastCandle.high
             val currentLow = lastCandle.low
+            val currentClose = lastCandle.close
 
             // London Open Sweep Window: 07:00 to 09:30 UTC
             val isLondonOpenSweepWindow = (currentHour in 7..8) || (currentHour == 9 && currentMinute <= 30)
 
-            // Pierce threshold: 10 to 30 pips in gold ($1.00 to $3.00)
+            // Pierce threshold: 5 to 30 pips ($0.50 to $3.00 on Gold)
             val pierceAbove = currentHigh - asianRange.high
             val pierceBelow = asianRange.low - currentLow
 
-            val candleBody = abs(lastCandle.close - lastCandle.open)
-            val candleRange = max(0.01, currentHigh - currentLow)
-            val upperWick = currentHigh - max(lastCandle.open, lastCandle.close)
-            val lowerWick = min(lastCandle.open, lastCandle.close) - currentLow
-
-            if (pierceAbove in 0.8..4.0 && lastCandle.close <= asianRange.high) {
-                // Pierced above Asian High, rejected back inside range (pin bar or bearish reversal)
-                val isBearishRejection = (upperWick / candleRange >= 0.45) || (lastCandle.close < lastCandle.open)
-                if (isBearishRejection || isLondonOpenSweepWindow) {
+            if (isLondonOpenSweepWindow) {
+                if (pierceAbove in 0.50..3.00 && currentClose <= asianRange.high) {
+                    // Pierced Asian High by 5 to 30 pips and candle closes back inside range
                     sweepStatus = LiquiditySweepStatus.HIGH_SWEPT_REVERSED
-                    sweepTag = "ASIAN_RANGE_LIQUIDITY_PURGE"
-                    sweepDetails = "ASIAN_RANGE_LIQUIDITY_PURGE: Asian High ($${round2(asianRange.high)}) swept by +${round1(pierceAbove * 10)} pips ($${round2(pierceAbove)}). Failed to hold; violently rejected back inside range."
-                }
-            } else if (pierceBelow in 0.8..4.0 && lastCandle.close >= asianRange.low) {
-                // Pierced below Asian Low, rejected back inside range (pin bar or bullish reversal)
-                val isBullishRejection = (lowerWick / candleRange >= 0.45) || (lastCandle.close > lastCandle.open)
-                if (isBullishRejection || isLondonOpenSweepWindow) {
+                    sweepTag = "ASIAN_RANGE_LIQUIDITY_PURGE (Bull Trap)"
+                    sweepDetails = "ASIAN_RANGE_LIQUIDITY_PURGE (Bull Trap): Asian High ($${round2(asianRange.high)}) pierced by +$${round2(pierceAbove)} (+${round1(pierceAbove * 10)} pips) and closed back inside range."
+                } else if (pierceBelow in 0.50..3.00 && currentClose >= asianRange.low) {
+                    // Swept below Asian Low by 5 to 30 pips and closes back inside range
                     sweepStatus = LiquiditySweepStatus.LOW_SWEPT_REVERSED
-                    sweepTag = "ASIAN_RANGE_LIQUIDITY_PURGE"
-                    sweepDetails = "ASIAN_RANGE_LIQUIDITY_PURGE: Asian Low ($${round2(asianRange.low)}) swept by -${round1(pierceBelow * 10)} pips ($${round2(pierceBelow)}). Failed to hold; violently rejected back inside range."
-                }
-            } else if (currentHigh > asianRange.high || currentLow < asianRange.low) {
-                sweepStatus = LiquiditySweepStatus.PURGE_IN_PROGRESS
-                sweepDetails = if (currentHigh > asianRange.high) {
-                    "LIQUIDITY HUNT IN PROGRESS: Testing above Asian High ($${round2(asianRange.high)}), delta: +$${round2(currentHigh - asianRange.high)}."
+                    sweepTag = "ASIAN_RANGE_LIQUIDITY_PURGE (Bear Trap)"
+                    sweepDetails = "ASIAN_RANGE_LIQUIDITY_PURGE (Bear Trap): Asian Low ($${round2(asianRange.low)}) swept by -$${round2(pierceBelow)} (-${round1(pierceBelow * 10)} pips) and closed back inside range."
                 } else {
-                    "LIQUIDITY HUNT IN PROGRESS: Testing below Asian Low ($${round2(asianRange.low)}), delta: -$${round2(asianRange.low - currentLow)}."
+                    sweepStatus = LiquiditySweepStatus.WITHIN_RANGE
+                    sweepDetails = "WITHIN RANGE (Asian H: $${round2(asianRange.high)} | L: $${round2(asianRange.low)})"
                 }
+            } else {
+                sweepStatus = LiquiditySweepStatus.WITHIN_RANGE
+                sweepDetails = "WITHIN RANGE (Asian H: $${round2(asianRange.high)} | L: $${round2(asianRange.low)})"
             }
         }
 
@@ -287,59 +280,126 @@ object SilentLiquidityEngine {
     }
 
     /**
-     * Extracts Asian Session (00:00 - 07:00 UTC) High & Low range.
-     * Looks at candles from today's Asian session or the most recent Asian session in history.
+     * Extracts Asian Session (00:00 - 07:00 UTC) High & Low range:
+     * - Restricts Asian session filtering strictly to today's UTC date between 00:00:00 UTC and 07:00:00 UTC.
+     * - If current UTC time is between 00:00 and 07:00 UTC: High = max(High), Low = min(Low) from 00:00 UTC up to current candle.
+     * - If current UTC time is after 07:00 UTC: High and Low represent locked 00:00–07:00 UTC range of current UTC day.
+     * - If current day candles before 07:00 UTC are missing: Fall back to prior trading day's 00:00–07:00 UTC range. Never unconstrained historical data.
+     * - Sanity check: Resulting Asian High and Low realistically sit within ±1.5% of current live XAUUSD price.
      */
     private fun computeAsianSessionRange(candles: List<CandleEntity>, referenceTimestamp: Long): AsianSessionRange {
-        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-
-        // Filter candles timestamped in Asian hours (hour < 7)
-        val asianCandles = candles.filter { c ->
-            cal.timeInMillis = c.timestamp
-            cal.get(Calendar.HOUR_OF_DAY) < 7
+        if (candles.isEmpty()) {
+            return AsianSessionRange(2864.0, 2854.0, 10.0, false)
         }
 
-        if (asianCandles.size >= 3) {
-            // Take the most recent Asian cluster (last 20 asian candles)
-            val cluster = asianCandles.takeLast(min(asianCandles.size, 30))
-            val high = cluster.maxOf { it.high }
-            val low = cluster.minOf { it.low }
-            return AsianSessionRange(
-                high = high,
-                low = low,
-                rangeSpread = high - low,
-                valid = true
-            )
+        val currentPrice = candles.last().close
+        val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            timeInMillis = referenceTimestamp
+        }
+        val currentYear = utcCal.get(Calendar.YEAR)
+        val currentDayOfYear = utcCal.get(Calendar.DAY_OF_YEAR)
+        val currentHour = utcCal.get(Calendar.HOUR_OF_DAY)
+
+        val candleCal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+
+        fun isAsianCandle(c: CandleEntity, targetYear: Int, targetDayOfYear: Int, maxTimestamp: Long = Long.MAX_VALUE): Boolean {
+            if (c.timestamp > maxTimestamp) return false
+            candleCal.timeInMillis = c.timestamp
+            val y = candleCal.get(Calendar.YEAR)
+            val d = candleCal.get(Calendar.DAY_OF_YEAR)
+            val h = candleCal.get(Calendar.HOUR_OF_DAY)
+            return y == targetYear && d == targetDayOfYear && h in 0..6
         }
 
-        // Fallback: estimate from first third of available candles
-        if (candles.size >= 15) {
-            val sample = candles.take(min(15, candles.size / 2))
-            val high = sample.maxOf { it.high }
-            val low = sample.minOf { it.low }
-            return AsianSessionRange(
-                high = high,
-                low = low,
-                rangeSpread = high - low,
-                valid = true
-            )
+        var asianCandles: List<CandleEntity> = emptyList()
+
+        if (currentHour < 7) {
+            // Case 1: If current UTC time is between 00:00 and 07:00 UTC:
+            // Calculate High = max(High) and Low = min(Low) from 00:00 UTC up to current candle.
+            val todayAsian = candles.filter { isAsianCandle(it, currentYear, currentDayOfYear, referenceTimestamp) }
+            if (todayAsian.isNotEmpty()) {
+                asianCandles = todayAsian
+            }
+        } else {
+            // Case 2: If current UTC time is after 07:00 UTC:
+            // High and Low represent the locked 00:00–07:00 UTC range of the current UTC day.
+            val todayLockedAsian = candles.filter { isAsianCandle(it, currentYear, currentDayOfYear) }
+            if (todayLockedAsian.isNotEmpty()) {
+                asianCandles = todayLockedAsian
+            }
         }
 
-        val lastPrice = candles.lastOrNull()?.close ?: 2864.0
+        // Case 3: If current day candles before 07:00 UTC are missing (e.g. market open / weekend rollover):
+        // Fall back to prior trading day's 00:00–07:00 UTC range. Never query unconstrained historical data.
+        if (asianCandles.isEmpty()) {
+            val priorCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                timeInMillis = referenceTimestamp
+                add(Calendar.DAY_OF_YEAR, -1)
+            }
+            val priorYear = priorCal.get(Calendar.YEAR)
+            val priorDayOfYear = priorCal.get(Calendar.DAY_OF_YEAR)
+            val priorDayAsian = candles.filter { isAsianCandle(it, priorYear, priorDayOfYear) }
+            if (priorDayAsian.isNotEmpty()) {
+                asianCandles = priorDayAsian
+            }
+        }
+
+        var rawHigh: Double
+        var rawLow: Double
+        var isValid: Boolean
+
+        if (asianCandles.isNotEmpty()) {
+            rawHigh = roundD2(asianCandles.maxOf { it.high })
+            rawLow = roundD2(asianCandles.minOf { it.low })
+            isValid = true
+        } else {
+            // Clean baseline calibrated tightly to current spot price (~0.3% spread)
+            rawHigh = roundD2(currentPrice + (currentPrice * 0.003))
+            rawLow = roundD2(currentPrice - (currentPrice * 0.003))
+            isValid = false
+        }
+
+        // Strict Sanity Check: Ensure Asian High and Low realistically sit within ±1.5% of current live XAUUSD price
+        val maxAllowedHigh = currentPrice * 1.015
+        val minAllowedLow = currentPrice * 0.985
+
+        val high = roundD2(rawHigh.coerceIn(currentPrice, maxAllowedHigh))
+        val low = roundD2(rawLow.coerceIn(minAllowedLow, currentPrice))
+        val rangeSpread = roundD2(max(0.1, high - low))
+
         return AsianSessionRange(
-            high = lastPrice + 8.5,
-            low = lastPrice - 8.5,
-            rangeSpread = 17.0,
-            valid = false
+            high = high,
+            low = low,
+            rangeSpread = rangeSpread,
+            valid = isValid
         )
     }
 
     /**
-     * Calculates Intra-Candle Delta Pressure metrics and detects exhaustion divergences:
-     * Buying Pressure = (Close - Low) / (High - Low) * Volume
-     * Selling Pressure = (High - Close) / (High - Low) * Volume
+     * Calculates Volume Delta Pressure (Tape Proxy) & Exhaustion Divergence:
+     * - Buy Aggression % = ((Close - Low) / max(High - Low, 0.01)) * 100
+     * - Sell Aggression % = ((High - Close) / max(High - Low, 0.01)) * 100
+     * - Output 'Net Buyers' or 'Net Sellers' based on the dominant percentage.
      */
     private fun computeDeltaPressureMetrics(candles: List<CandleEntity>): DeltaPressureMetrics {
+        if (candles.isEmpty()) {
+            return DeltaPressureMetrics(
+                buyingPressure = 50.0,
+                sellingPressure = 50.0,
+                buyingAggressionPct = 50.0,
+                sellingAggressionPct = 50.0,
+                isExhaustionDivergence = false,
+                divergenceType = null,
+                divergenceDetails = null,
+                dominantParty = "Net Buyers"
+            )
+        }
+
+        val lastCandle = candles.last()
+        val currentRange = max(0.01, lastCandle.high - lastCandle.low)
+        val currentBuyAggression = ((lastCandle.close - lastCandle.low) / currentRange) * 100.0
+        val currentSellAggression = ((lastCandle.high - lastCandle.close) / currentRange) * 100.0
+
         val window = candles.takeLast(min(20, candles.size))
         var totalBuying = 0.0
         var totalSelling = 0.0
@@ -348,7 +408,7 @@ object SilentLiquidityEngine {
         val candleDeltas = mutableListOf<Pair<Double, Double>>() // (Price, BuyingPressureRatio)
 
         for (c in window) {
-            val range = max(0.001, c.high - c.low)
+            val range = max(0.01, c.high - c.low)
             val buyPressure = ((c.close - c.low) / range) * c.volume
             val sellPressure = ((c.high - c.close) / range) * c.volume
 
@@ -360,11 +420,15 @@ object SilentLiquidityEngine {
             candleDeltas.add(Pair(c.high, buyRatio))
         }
 
-        val buyingAggressionPct = if (totalVol > 0.0) (totalBuying / totalVol) * 100.0 else 50.0
-        val sellingAggressionPct = if (totalVol > 0.0) (totalSelling / totalVol) * 100.0 else 50.0
+        // Weighted aggression blending the latest tick candle with the 20-period volume profile
+        val windowBuyAggression = if (totalVol > 0.0) (totalBuying / totalVol) * 100.0 else currentBuyAggression
+        val windowSellAggression = if (totalVol > 0.0) (totalSelling / totalVol) * 100.0 else currentSellAggression
+
+        val buyingAggressionPct = roundD1((currentBuyAggression * 0.6) + (windowBuyAggression * 0.4))
+        val sellingAggressionPct = roundD1(100.0 - buyingAggressionPct)
+        val dominantParty = if (buyingAggressionPct >= sellingAggressionPct) "Net Buyers" else "Net Sellers"
 
         // Exhaustion Divergence Detection
-        // If price makes a new higher high but Buying Pressure Ratio decreases by > 30% vs prior swing high
         var isDivergence = false
         var divergenceType: String? = null
         var divergenceDetails: String? = null
@@ -379,13 +443,12 @@ object SilentLiquidityEngine {
             val priorSwingCandle = firstHalf.maxByOrNull { it.high } ?: firstHalf.first()
             val currentSwingCandle = secondHalf.maxByOrNull { it.high } ?: secondHalf.last()
 
-            val priorRange = max(0.001, priorSwingCandle.high - priorSwingCandle.low)
-            val currentRange = max(0.001, currentSwingCandle.high - currentSwingCandle.low)
+            val priorRange = max(0.01, priorSwingCandle.high - priorSwingCandle.low)
+            val secondRange = max(0.01, currentSwingCandle.high - currentSwingCandle.low)
 
             val priorBuyRatio = (priorSwingCandle.close - priorSwingCandle.low) / priorRange
-            val currentBuyRatio = (currentSwingCandle.close - currentSwingCandle.low) / currentRange
+            val currentBuyRatio = (currentSwingCandle.close - currentSwingCandle.low) / secondRange
 
-            // Price made higher high but buying pressure collapsed by > 30%
             if (currentHigh > priorHigh && priorBuyRatio > 0.35) {
                 val drop = (priorBuyRatio - currentBuyRatio) / priorBuyRatio
                 if (drop >= 0.30) {
@@ -395,7 +458,6 @@ object SilentLiquidityEngine {
                 }
             }
 
-            // Also check Bullish Exhaustion Divergence on lower low
             if (!isDivergence) {
                 val priorLow = firstHalf.minOf { it.low }
                 val currentLow = secondHalf.minOf { it.low }
@@ -403,11 +465,11 @@ object SilentLiquidityEngine {
                 val priorLowCandle = firstHalf.minByOrNull { it.low } ?: firstHalf.first()
                 val currentLowCandle = secondHalf.minByOrNull { it.low } ?: secondHalf.last()
 
-                val priorLowRange = max(0.001, priorLowCandle.high - priorLowCandle.low)
-                val currentLowRange = max(0.001, currentLowCandle.high - currentLowCandle.low)
+                val priorLowRange = max(0.01, priorLowCandle.high - priorLowCandle.low)
+                val secondLowRange = max(0.01, currentLowCandle.high - currentLowCandle.low)
 
                 val priorSellRatio = (priorLowCandle.high - priorLowCandle.close) / priorLowRange
-                val currentSellRatio = (currentLowCandle.high - currentLowCandle.close) / currentLowRange
+                val currentSellRatio = (currentLowCandle.high - currentLowCandle.close) / secondLowRange
 
                 if (currentLow < priorLow && priorSellRatio > 0.35) {
                     val drop = (priorSellRatio - currentSellRatio) / priorSellRatio
@@ -427,7 +489,8 @@ object SilentLiquidityEngine {
             sellingAggressionPct = sellingAggressionPct,
             isExhaustionDivergence = isDivergence,
             divergenceType = divergenceType,
-            divergenceDetails = divergenceDetails
+            divergenceDetails = divergenceDetails,
+            dominantParty = dominantParty
         )
     }
 
@@ -458,6 +521,8 @@ object SilentLiquidityEngine {
         )
     }
 
+    private fun roundD1(v: Double): Double = round(v * 10.0) / 10.0
+    private fun roundD2(v: Double): Double = round(v * 100.0) / 100.0
     private fun round1(v: Double): String = String.format(Locale.US, "%.1f", v)
     private fun round2(v: Double): String = String.format(Locale.US, "%.2f", v)
 }

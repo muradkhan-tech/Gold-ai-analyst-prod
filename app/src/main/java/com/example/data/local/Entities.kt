@@ -139,7 +139,14 @@ data class FundamentalAnalysisEntity(
     val detailedSynthesis: String,
     val llmProvider: String = "OpenAI",
     val modelName: String = "gpt-4o",
-    val evaluatedAt: Long = System.currentTimeMillis()
+    val evaluatedAt: Long = System.currentTimeMillis(),
+    val marketOverview: String = "",
+    val shortTermTrend: String = "BULLISH", // BULLISH, BEARISH, NEUTRAL
+    val bullishScenario: String = "",
+    val bearishScenario: String = "",
+    val invalidationLevel: Double = 0.0,
+    val keyCatalystsJson: String = "[]",
+    val providerActive: String = "Quant Heuristic (Zero-Key Active)" // "Quant Heuristic (Zero-Key Active)" | "Gemini Pro" | "OpenAI GPT"
 )
 
 @Entity(tableName = "backtest_outcomes")

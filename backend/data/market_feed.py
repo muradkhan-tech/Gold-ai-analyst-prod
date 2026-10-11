@@ -15,21 +15,24 @@ class XauUsdMarketFeed:
 
     def generate_next_tick(self) -> Dict[str, Any]:
         # Drift + Brownian motion simulation
-        change = random.gauss(0, self.volatility)
+        change = random.gauss(0, self.volatility * 0.2)
         self.current_price = round(max(self.current_price + change, 1000.0), 2)
-        half_spread = self.spread / 2.0
+        micro_spread = round(random.uniform(0.05, 0.15), 2)
+        half_spread = micro_spread / 2.0
         bid = round(self.current_price - half_spread, 2)
         ask = round(self.current_price + half_spread, 2)
         vol = round(random.uniform(0.5, 15.0), 2)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
 
         return {
             "symbol": "XAUUSD",
             "price": self.current_price,
             "bid": bid,
             "ask": ask,
-            "spread": self.spread,
+            "spread": micro_spread,
             "volume": vol,
-            "timestamp": datetime.datetime.utcnow().isoformat()
+            "timestamp": now_utc.isoformat(),
+            "timestamp_epoch_ms": int(now_utc.timestamp() * 1000)
         }
 
     def generate_sample_candles(self, count: int = 100, timeframe_minutes: int = 15) -> List[Dict[str, Any]]:

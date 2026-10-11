@@ -82,6 +82,9 @@ fun SettingsScreen(
     adminDevMessages: List<ChatMessage> = emptyList(),
     isAdminDevThinking: Boolean = false,
     onSendAdminDevMessage: ((String) -> Unit)? = null,
+    onCleanHistoricalSignals: ((Long) -> Unit)? = null,
+    onClearGarbageData: (() -> Unit)? = null,
+    onWipeAllTestData: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val keyNames = listOf(
@@ -210,6 +213,7 @@ fun SettingsScreen(
                 SystemHealthState.LIVE -> BullishGreen
                 SystemHealthState.OFFLINE_DELAYED -> GoldPrimary
                 SystemHealthState.RATE_LIMITED_NEED_KEY -> BearishRed
+                SystemHealthState.MARKET_CLOSED -> BearishRed
             }
 
             Box(
@@ -553,7 +557,16 @@ fun SettingsScreen(
             )
         }
 
-        // 3. EMBEDDED DEVELOPER ASSISTANT (SUPER_ADMIN ONLY)
+        // 3. INTELLIGENT DATA MANAGEMENT & RETENTION CARD
+        item {
+            DataManagementRetentionCard(
+                onCleanHistorical = onCleanHistoricalSignals,
+                onClearGarbage = onClearGarbageData,
+                onWipeAll = onWipeAllTestData
+            )
+        }
+
+        // 4. EMBEDDED DEVELOPER ASSISTANT (SUPER_ADMIN ONLY)
         item {
             AdminDeveloperAssistantCard(
                 currentUser = currentUser,
@@ -563,7 +576,7 @@ fun SettingsScreen(
             )
         }
 
-        // 4. GOOGLE PLAY & LEGAL COMPLIANCE SECTION
+        // 5. GOOGLE PLAY & LEGAL COMPLIANCE SECTION
         item {
             LegalComplianceCard()
         }
@@ -1014,3 +1027,201 @@ fun LegalComplianceCard() {
         }
     }
 }
+
+@Composable
+fun DataManagementRetentionCard(
+    onCleanHistorical: ((Long) -> Unit)?,
+    onClearGarbage: (() -> Unit)?,
+    onWipeAll: (() -> Unit)?
+) {
+    var selectedRetentionDays by remember { mutableStateOf(1) } // 1 Day, 3 Days, 7 Days (1 Week), 30 Days (1 Month)
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+            .padding(14.dp)
+            .testTag("data_management_card")
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Data Storage",
+                        tint = GoldPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Data Management & Storage Retention",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(GoldPrimary.copy(alpha = 0.15f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "SAFETY ENFORCED",
+                        color = GoldPrimary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            Text(
+                text = "Keep local Room and cloud tables optimized. Strict Safety Logic: Active and 'PENDING' setups are strictly protected from historical pruning.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (statusMessage != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(BullishGreen.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                        .border(1.dp, BullishGreen.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = statusMessage ?: "",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = BullishGreen,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Retention Window Selection (1 Day, 3 Days, 1 Week, 1 Month)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Clean Closed Historical Signals Older Than:",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val retentionOptions = listOf(
+                        1 to "1 Day",
+                        3 to "3 Days",
+                        7 to "1 Week",
+                        30 to "1 Month"
+                    )
+
+                    retentionOptions.forEach { (days, label) ->
+                        val isSelected = selectedRetentionDays == days
+                        OutlinedButton(
+                            onClick = { selectedRetentionDays = days },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(32.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (isSelected) GoldPrimary.copy(alpha = 0.15f) else Color.Transparent
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isSelected) GoldPrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) GoldPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        val millis = selectedRetentionDays * 24 * 3600 * 1000L
+                        onCleanHistorical?.invoke(millis)
+                        statusMessage = "Pruned closed trades older than $selectedRetentionDays day(s). Active & PENDING trades preserved."
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                ) {
+                    Text(
+                        text = "Clean Historical Signals ($selectedRetentionDays Days+)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Cleanup Garbage Data (confidence = 0 or PENDING > 48h)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        onClearGarbage?.invoke()
+                        statusMessage = "Cleared orphaned trades (>48h pending) and zero-confidence test artifacts."
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                ) {
+                    Text(
+                        text = "Clear Garbage / Failed Data",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        onWipeAll?.invoke()
+                        statusMessage = "All test signals wiped. Fresh live market generation active."
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BearishRed,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = "Wipe All Test Data",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+

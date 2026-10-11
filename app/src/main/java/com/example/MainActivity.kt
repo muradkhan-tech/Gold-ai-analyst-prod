@@ -225,7 +225,10 @@ fun GoldAppContent(viewModel: GoldViewModel) {
                             onSignOut = { viewModel.signOut() },
                             adminDevMessages = adminDevMessages,
                             isAdminDevThinking = isAdminDevThinking,
-                            onSendAdminDevMessage = { viewModel.sendAdminDevChatMessage(it) }
+                            onSendAdminDevMessage = { viewModel.sendAdminDevChatMessage(it) },
+                            onCleanHistoricalSignals = { viewModel.cleanHistoricalSignals(it) },
+                            onClearGarbageData = { viewModel.clearGarbageData() },
+                            onWipeAllTestData = { viewModel.wipeTestData() }
                         )
                     }
                 }
@@ -247,7 +250,8 @@ fun TerminalOverview(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(bottom = 24.dp)
             .testTag("terminal_overview_screen")
     ) {
         // Interactive Candlestick Chart

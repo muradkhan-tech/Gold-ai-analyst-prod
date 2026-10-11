@@ -14,11 +14,28 @@ except ImportError:
         from fastapi.responses import JSONResponse
         DefaultResponse = JSONResponse
 
+from contextlib import asynccontextmanager
+from backend.data.subsystem import market_data_subsystem
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start real-time background market data poller and worker
+    market_data_subsystem.start_background_worker()
+    # Trigger initial poll to seed ring buffers immediately
+    try:
+        await market_data_subsystem.poll_market_data()
+    except Exception:
+        pass
+    yield
+    # Gracefully stop worker on shutdown
+    market_data_subsystem.stop_background_worker()
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Production-ready XAUUSD Institutional Quantitative & AI Financial Analyst Backend",
-    default_response_class=DefaultResponse
+    default_response_class=DefaultResponse,
+    lifespan=lifespan
 )
 
 app.add_middleware(

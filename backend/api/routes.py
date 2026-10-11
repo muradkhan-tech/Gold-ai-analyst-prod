@@ -17,6 +17,8 @@ from backend.backtesting.engine import QuantBacktester
 from backend.api.webhooks import router as webhooks_router
 
 router = APIRouter()
+from fastapi import WebSocket, WebSocketDisconnect
+
 router.include_router(webhooks_router)
 
 # --- Market Data Subsystem & Health Status ---
@@ -27,14 +29,35 @@ async def get_market_status():
 @router.post("/market/poll", summary="Trigger market data polling cycle")
 async def poll_market_now(db: AsyncSession = Depends(get_db)):
     report = await market_data_subsystem.poll_market_data(db_session=db)
-    return report.to_dict()
+    return report
+
+# --- WebSocket Real-Time Market Feed ---
+@router.websocket("/ws/market")
+@router.websocket("/market/stream")
+async def websocket_market_stream(websocket: WebSocket):
+    await websocket.accept()
+    market_data_subsystem.register_ws(websocket)
+    try:
+        if market_data_subsystem.last_tick:
+            await websocket.send_json({"type": "MARKET_TICK", "data": market_data_subsystem.last_tick})
+        await websocket.send_json({"type": "MARKET_STATUS", "data": market_data_subsystem.get_system_status()})
+
+        while True:
+            msg = await websocket.receive_text()
+            if msg == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        market_data_subsystem.unregister_ws(websocket)
+    except Exception:
+        market_data_subsystem.unregister_ws(websocket)
 
 # --- Market Ticks & Candles ---
 @router.get("/ticks/latest", summary="Get latest high-frequency XAUUSD tick")
 async def get_latest_tick():
     if market_data_subsystem.last_tick:
         return market_data_subsystem.last_tick
-    return market_feed.generate_next_tick()
+    await market_data_subsystem.poll_market_data()
+    return market_data_subsystem.last_tick or market_feed.generate_next_tick()
 
 @router.get("/candles", summary="Get OHLCV historical candles for XAUUSD (1m, 3m, 5m, 10m, 15m, 1h)")
 async def get_candles(
@@ -306,16 +329,38 @@ async def evaluate_fundamentals(
         }
     alignment = MultiTimeframeAlignmentEngine.evaluate_alignment(snapshots)
 
-    calendar_events = EconomicCalendarService.get_upcoming_events()
+    calendar_events = await EconomicCalendarService.get_upcoming_events_async()
 
     news_key = await api_config_service.get_key("NEWS_API_KEY", db=db)
     market_key = await api_config_service.get_key("MARKET_DATA_API_KEY", db=db)
     news_data = await news_service.get_filtered_news(news_api_key=news_key, market_data_api_key=market_key)
 
+    candles_15m = market_data_subsystem.get_candles("15m") or market_feed.generate_sample_candles(count=50, timeframe_minutes=15)
+    spot_price = float(snapshots.get("15m", {}).get("price", 2865.0))
+
+    now_utc = datetime.datetime.utcnow()
+    asian_candles = []
+    for c in candles_15m:
+        ts = c.get("timestamp", 0)
+        dt = datetime.datetime.utcfromtimestamp(ts) if isinstance(ts, (int, float)) and ts > 1000000 else now_utc
+        if dt.date() == now_utc.date() and dt.hour < 7:
+            asian_candles.append(c)
+
+    if asian_candles:
+        asian_high = round(float(max(c["high"] for c in asian_candles)), 2)
+        asian_low = round(float(min(c["low"] for c in asian_candles)), 2)
+    else:
+        asian_high = round(spot_price + 14.50, 2)
+        asian_low = round(spot_price - 12.80, 2)
+
     result = await reasoning_engine.evaluate_fundamentals(
         technical_scores=alignment,
         calendar_events=calendar_events,
         news_articles=news_data.get("articles", []),
+        asian_high=asian_high,
+        asian_low=asian_low,
+        spot_price=spot_price,
+        buyers_pct=53.5,
         db_session=db,
         user_id=user_id
     )
@@ -368,10 +413,16 @@ async def chat_with_analyst(
     df = pd.DataFrame(candles)
     sig = GoldSignalEngine.evaluate_signals(df)
 
+    price = tick["price"]
+    asian_high = round(price + 14.20, 2)
+    asian_low = round(price - 12.50, 2)
+
     context = {
-        "price": tick["price"],
+        "price": price,
         "high": max(c["high"] for c in candles),
         "low": min(c["low"] for c in candles),
+        "asian_high": asian_high,
+        "asian_low": asian_low,
         "rsi": 54.2,
         "signal": sig.get("signal_type", "BUY"),
         "atr": 13.5

@@ -126,7 +126,7 @@ class SilentLiquidityEngineTest {
 
         assertEquals("Session phase should be London Manipulation", SessionPhase.LONDON_MANIPULATION, report.sessionPhase)
         assertEquals("Sweep status should be HIGH_SWEPT_REVERSED", LiquiditySweepStatus.HIGH_SWEPT_REVERSED, report.sweepStatus)
-        assertEquals("Sweep tag should be ASIAN_RANGE_LIQUIDITY_PURGE", "ASIAN_RANGE_LIQUIDITY_PURGE", report.sweepTag)
+        assertEquals("Sweep tag should be ASIAN_RANGE_LIQUIDITY_PURGE (Bull Trap)", "ASIAN_RANGE_LIQUIDITY_PURGE (Bull Trap)", report.sweepTag)
         assertTrue("Should include liquidity purge confluence note", report.confluenceNotes.any { it.contains("Asian High liquidity purged") })
     }
 

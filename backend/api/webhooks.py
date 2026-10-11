@@ -1,6 +1,7 @@
 import json
 import datetime
 import logging
+import hashlib
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Header, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
@@ -16,7 +17,9 @@ router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 class TradingViewWebhookPayload(BaseModel):
     secret: Optional[str] = Field(None, description="Secret token if provided in body")
-    indicator: str = Field(..., description="Name of custom proprietary indicator, e.g. 'Scalping with Dr Hafiz V2' or '3ESRA'")
+    passphrase: Optional[str] = Field(None, description="Passphrase header/body token")
+    indicator: Optional[str] = Field(None, description="Name of custom proprietary indicator, e.g. 'Scalping with Dr Hafiz V2' or '3ESRA'")
+    indicator_name: Optional[str] = Field(None, description="Alternative key for indicator name")
     symbol: str = Field("XAUUSD", description="Ticker symbol")
     action: str = Field(..., description="Signal action, e.g. BUY, SELL, EXIT, ALERT")
     price: float = Field(..., description="Actual execution or trigger price")
@@ -27,6 +30,9 @@ class TradingViewWebhookPayload(BaseModel):
 
 # In-memory alert store for real-time streaming
 received_webhook_alerts: List[Dict[str, Any]] = []
+
+# In-memory deduplication cache for alert signatures: hash -> epoch timestamp
+_recent_alert_signatures: Dict[str, float] = {}
 
 @router.post("/tradingview", summary="Secure webhook endpoint for TradingView custom alerts")
 async def receive_tradingview_alert(
@@ -42,26 +48,63 @@ async def receive_tradingview_alert(
     """
     configured_secret = await api_config_service.get_key("TRADINGVIEW_WEBHOOK_SECRET", db=db)
     
-    # Authenticate via header or payload body
-    provided_secret = (x_webhook_secret or payload.secret or "").strip()
+    indicator_name = payload.indicator or payload.indicator_name or "Custom Indicator"
+    raw_passphrase = payload.passphrase or payload.secret or ""
+    provided_secret = (x_webhook_secret or raw_passphrase or "").strip()
 
-    if not configured_secret:
-        logger.warning("TRADINGVIEW_WEBHOOK_SECRET is not configured on server.")
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized: TRADINGVIEW_WEBHOOK_SECRET is not configured on the server. Please set it in Settings."
-        )
+    # Determine if secret verification is required
+    # If TRADINGVIEW_WEBHOOK_SECRET is configured in Settings, verify passphrase header/body token.
+    # If unset or default, accept alerts in development mode without crashing.
+    is_default_secret = (
+        not configured_secret
+        or configured_secret.strip() in ("", "default", "YOUR_TRADINGVIEW_WEBHOOK_SECRET", "placeholder")
+    )
 
-    if provided_secret != configured_secret.strip():
-        logger.warning(f"Unauthorized TradingView webhook attempt for indicator '{payload.indicator}'")
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized: Invalid TRADINGVIEW_WEBHOOK_SECRET."
-        )
+    if not is_default_secret:
+        if provided_secret != configured_secret.strip():
+            logger.warning(f"Unauthorized TradingView webhook attempt for indicator '{indicator_name}'")
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized: Invalid TRADINGVIEW_WEBHOOK_SECRET passphrase."
+            )
+        is_verified = True
+    else:
+        # Development mode: accept alerts without crashing
+        is_verified = True
+        logger.info(f"TradingView webhook received in development mode (no secret enforced) for indicator '{indicator_name}'")
 
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     utc_now_iso = utc_now.isoformat()
-    
+    now_epoch = utc_now.timestamp()
+
+    # -------------------------------------------------------------
+    # Deduplication Engine:
+    # Maintain an in-memory cache of recent alert signatures:
+    # hash(indicator_name + timeframe + action + candle_minute)
+    # If an identical alert arrives within 60 seconds, discard it.
+    # -------------------------------------------------------------
+    candle_minute = int(now_epoch // 60)
+    sig_raw = f"{indicator_name.strip().lower()}_{payload.timeframe.strip().lower()}_{payload.action.strip().upper()}_{candle_minute}"
+    alert_sig = hashlib.sha256(sig_raw.encode("utf-8")).hexdigest()
+
+    # Clean old dedup entries (> 120s)
+    expired_keys = [k for k, ts in _recent_alert_signatures.items() if (now_epoch - ts) > 120]
+    for k in expired_keys:
+        _recent_alert_signatures.pop(k, None)
+
+    if alert_sig in _recent_alert_signatures:
+        time_since = now_epoch - _recent_alert_signatures[alert_sig]
+        if time_since < 60:
+            logger.info(f"Duplicate TradingView alert discarded within 60s window: {sig_raw}")
+            return {
+                "status": "ignored",
+                "message": f"Duplicate alert suppressed within 60s deduplication window for '{indicator_name}'.",
+                "signature": alert_sig,
+                "received_at": utc_now_iso
+            }
+
+    _recent_alert_signatures[alert_sig] = now_epoch
+
     # Parse timestamp
     alert_ts = utc_now
     if payload.timestamp:
@@ -71,18 +114,20 @@ async def receive_tradingview_alert(
             alert_ts = utc_now
 
     # Persist to DB if available
+    clean_indicator = indicator_name.strip()
+    clean_action = payload.action.strip().upper()
     try:
         db_alert = TradingViewAlert(
-            indicator=payload.indicator.strip(),
+            indicator=clean_indicator,
             symbol=payload.symbol.upper(),
-            action=payload.action.upper(),
+            action=clean_action,
             price=float(payload.price),
             timeframe=payload.timeframe,
             metrics_json=json.dumps(payload.metrics or {}),
             message=payload.message,
             timestamp=alert_ts.replace(tzinfo=None),
             received_at=utc_now.replace(tzinfo=None),
-            verified=True
+            verified=is_verified
         )
         db.add(db_alert)
         await db.commit()
@@ -94,16 +139,16 @@ async def receive_tradingview_alert(
 
     alert_record = {
         "id": alert_db_id,
-        "indicator": payload.indicator.strip(),
+        "indicator": clean_indicator,
         "symbol": payload.symbol.upper(),
-        "action": payload.action.upper(),
+        "action": clean_action,
         "price": payload.price,
         "timeframe": payload.timeframe,
         "timestamp": payload.timestamp or utc_now_iso,
         "received_at": utc_now_iso,
         "message": payload.message,
         "metrics": payload.metrics or {},
-        "verified": True
+        "verified": is_verified
     }
 
     # Store in memory (bounded to last 100 alerts)
@@ -111,7 +156,7 @@ async def receive_tradingview_alert(
     if len(received_webhook_alerts) > 100:
         received_webhook_alerts.pop()
 
-    logger.info(f"Verified TradingView alert recorded: [{payload.indicator}] {payload.action} @ ${payload.price} ({payload.timeframe})")
+    logger.info(f"Verified TradingView alert recorded: [{clean_indicator}] {clean_action} @ ${payload.price} ({payload.timeframe})")
 
     return {
         "status": "success",

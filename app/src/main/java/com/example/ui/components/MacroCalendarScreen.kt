@@ -130,15 +130,15 @@ fun MacroCalendarScreen(
             }
         }
 
-        // 2. API Key Error Banner
-        if (fundamentalError != null) {
-            item {
-                ApiKeyWarningBanner(
-                    errorMessage = fundamentalError,
-                    onNavigateSettings = onNavigateSettings,
-                    onDismiss = onDismissError
-                )
-            }
+        // 2. Functional Engine Summary (Replaces red configuration error card)
+        item {
+            FundamentalEngineSummaryCard(
+                activeMode = if (fundamentalAnalysis?.providerActive?.contains("Gemini", ignoreCase = true) == true ||
+                    fundamentalAnalysis?.providerActive?.contains("OpenAI", ignoreCase = true) == true)
+                    "Live LLM Connected" else "Local Quant Heuristic (Zero-Key Active)",
+                latestNews = newsArticles.firstOrNull(),
+                highImpactEvents = events.filter { it.impact.equals("HIGH", ignoreCase = true) }
+            )
         }
 
         // 3. Sub-Tab Selector
@@ -237,64 +237,190 @@ fun MacroCalendarScreen(
 }
 
 @Composable
-fun ApiKeyWarningBanner(
-    errorMessage: String,
-    onNavigateSettings: () -> Unit,
-    onDismiss: () -> Unit
+fun FundamentalEngineSummaryCard(
+    activeMode: String,
+    latestNews: NewsArticleEntity?,
+    highImpactEvents: List<EconomicEventEntity>
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(GoldPrimary.copy(alpha = 0.15f))
-            .border(1.dp, GoldPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-            .padding(12.dp)
-            .testTag("api_key_warning_banner")
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, GoldPrimary.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .padding(14.dp)
+            .testTag("engine_status_summary_card")
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Header Row: Active Mode Status
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = "Key Alert",
-                    tint = GoldPrimary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(BullishGreen)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "CONFIGURATION REQUIRED",
+                        text = "ENGINE STATUS: $activeMode",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         color = GoldPrimary,
                         letterSpacing = 0.5.sp
                     )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(BullishGreen.copy(alpha = 0.15f))
+                        .border(1.dp, BullishGreen.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
                     Text(
-                        text = errorMessage,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 15.sp
+                        text = "ZERO-KEY FAILSAFE ACTIVE",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BullishGreen,
+                        fontFamily = FontFamily.Monospace
                     )
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    onClick = onNavigateSettings,
-                    colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(30.dp)
-                ) {
-                    Text("Settings", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            // Section 1: Latest News Headline
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "LATEST MACRO HEADLINE",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.5.sp
+                        )
+                        if (latestNews != null) {
+                            Text(
+                                text = "${latestNews.source} • ${latestNews.category}",
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = GoldPrimary
+                            )
+                        }
+                    }
+
+                    if (latestNews != null) {
+                        Text(
+                            text = latestNews.title,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 16.sp
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val sentColor = when (latestNews.sentiment) {
+                                "BULLISH" -> BullishGreen
+                                "BEARISH" -> BearishRed
+                                else -> GoldPrimary
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(sentColor.copy(alpha = 0.15f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "SENTIMENT: ${latestNews.sentiment}",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = sentColor,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "Curated institutional headlines ingesting live macro flow.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            // Section 2: Today's High-Impact Economic Releases
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "TODAY'S HIGH-IMPACT ECONOMIC RELEASES",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        letterSpacing = 0.5.sp
+                    )
+
+                    if (highImpactEvents.isNotEmpty()) {
+                        highImpactEvents.take(2).forEach { event ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = event.title,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Forecast: ${event.forecast ?: "N/A"} | Prev: ${event.previous ?: "N/A"}",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(BearishRed.copy(alpha = 0.15f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "HIGH IMPACT",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BearishRed,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "No high-impact releases scheduled for the current session window.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -317,6 +443,12 @@ fun FundamentalAiCard(
     val biasColor = when (analysis?.fundamentalBias) {
         "Bullish" -> BullishGreen
         "Bearish" -> BearishRed
+        else -> GoldPrimary
+    }
+
+    val trendColor = when (analysis?.shortTermTrend) {
+        "BULLISH" -> BullishGreen
+        "BEARISH" -> BearishRed
         else -> GoldPrimary
     }
 
@@ -344,7 +476,7 @@ fun FundamentalAiCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "AI REASONING SYNTHESIS",
+                        text = "QUANT REASONING ENGINE",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -368,7 +500,7 @@ fun FundamentalAiCard(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Reasoning...", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     } else {
-                        Text("Run LLM Synthesis", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Run Synthesis", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -391,7 +523,7 @@ fun FundamentalAiCard(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Click 'Run LLM Synthesis' to analyze filtered news, calendar releases, and multi-timeframe technical scores via OpenAI/Gemini.",
+                            text = "Click 'Run Synthesis' to analyze multi-timeframe alignment, volume delta pressure, and macro catalysts via the Deterministic Quant Engine.",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -399,32 +531,32 @@ fun FundamentalAiCard(
                     }
                 }
             } else {
-                // Key metrics: Market Risk & Fundamental Bias
+                // Key metrics: Short-Term Trend, Fundamental Bias, Market Risk, Confidence
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .background(riskColor.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
-                            .border(1.dp, riskColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                            .padding(12.dp)
+                            .background(trendColor.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                            .border(1.dp, trendColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
                     ) {
                         Column {
                             Text(
-                                text = "MARKET RISK",
-                                fontSize = 10.sp,
+                                text = "TREND",
+                                fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = analysis.marketRisk.uppercase(),
-                                fontSize = 16.sp,
+                                text = analysis.shortTermTrend,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Black,
                                 fontFamily = FontFamily.Monospace,
-                                color = riskColor
+                                color = trendColor
                             )
                         }
                     }
@@ -434,19 +566,19 @@ fun FundamentalAiCard(
                             .weight(1f)
                             .background(biasColor.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
                             .border(1.dp, biasColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                            .padding(12.dp)
+                            .padding(10.dp)
                     ) {
                         Column {
                             Text(
-                                text = "FUNDAMENTAL BIAS",
-                                fontSize = 10.sp,
+                                text = "BIAS",
+                                fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = analysis.fundamentalBias.uppercase(),
-                                fontSize = 16.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Black,
                                 fontFamily = FontFamily.Monospace,
                                 color = biasColor
@@ -457,21 +589,46 @@ fun FundamentalAiCard(
                     Box(
                         modifier = Modifier
                             .weight(1f)
+                            .background(riskColor.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                            .border(1.dp, riskColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
+                    ) {
+                        Column {
+                            Text(
+                                text = "RISK",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = analysis.marketRisk.uppercase(),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace,
+                                color = riskColor
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
                             .background(GoldPrimary.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
                             .border(1.dp, GoldPrimary.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                            .padding(12.dp)
+                            .padding(10.dp)
                     ) {
                         Column {
                             Text(
                                 text = "CONFIDENCE",
-                                fontSize = 10.sp,
+                                fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "${analysis.confidenceScore.toInt()}%",
-                                fontSize = 16.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Black,
                                 fontFamily = FontFamily.Monospace,
                                 color = GoldPrimary
@@ -480,11 +637,101 @@ fun FundamentalAiCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // Key Drivers
+                // Invalidation Level
+                if (analysis.invalidationLevel > 0.0) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(BearishRed.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                            .border(1.dp, BearishRed.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "INVALIDATION LEVEL (SL BOUNDARY)",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BearishRed,
+                                letterSpacing = 0.5.sp
+                            )
+                            Text(
+                                text = "$${String.format(Locale.US, "%.2f", analysis.invalidationLevel)}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace,
+                                color = BearishRed
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // Market Overview
+                val overviewText = if (analysis.marketOverview.isNotBlank()) analysis.marketOverview else analysis.detailedSynthesis
                 Text(
-                    text = "PRIMARY MACRO DRIVERS",
+                    text = "MARKET OVERVIEW & SYNTHESIS",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    letterSpacing = 0.5.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = overviewText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Tactical Scenarios (Bullish & Bearish)
+                if (analysis.bullishScenario.isNotBlank() || analysis.bearishScenario.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (analysis.bullishScenario.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(BullishGreen.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                                    .border(1.dp, BullishGreen.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("BULLISH SCENARIO", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = BullishGreen)
+                                    Text(analysis.bullishScenario, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface, lineHeight = 14.sp)
+                                }
+                            }
+                        }
+                        if (analysis.bearishScenario.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(BearishRed.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                                    .border(1.dp, BearishRed.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("BEARISH SCENARIO", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = BearishRed)
+                                    Text(analysis.bearishScenario, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface, lineHeight = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // Key Catalysts / Drivers
+                Text(
+                    text = "KEY CATALYSTS & ORDER FLOW CONFLUENCE",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -492,9 +739,15 @@ fun FundamentalAiCard(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
 
-                val drivers = remember(analysis.keyDriversJson) {
+                val catalystsJsonStr = if (analysis.keyCatalystsJson.isNotBlank() && analysis.keyCatalystsJson != "[]") {
+                    analysis.keyCatalystsJson
+                } else {
+                    analysis.keyDriversJson
+                }
+
+                val catalysts = remember(catalystsJsonStr) {
                     try {
-                        val arr = JSONArray(analysis.keyDriversJson)
+                        val arr = JSONArray(catalystsJsonStr)
                         (0 until arr.length()).map { arr.getString(it) }
                     } catch (e: Exception) {
                         listOf("Falling 10-year Treasury real yields", "Central bank physical gold accumulation", "US Dollar consolidating below resistance")
@@ -502,11 +755,11 @@ fun FundamentalAiCard(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    drivers.forEach { driver ->
+                    catalysts.forEach { catalyst ->
                         Row(verticalAlignment = Alignment.Top) {
                             Text("• ", color = GoldPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             Text(
-                                text = driver,
+                                text = catalyst,
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 lineHeight = 15.sp
@@ -515,59 +768,23 @@ fun FundamentalAiCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // Catalyst Impact
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                        .padding(10.dp)
-                ) {
-                    Column {
-                        Text(
-                            text = "CATALYST VOLATILITY ASSESSMENT",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GoldPrimary,
-                            letterSpacing = 0.5.sp
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = analysis.catalystImpact,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 15.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Detailed Synthesis
-                Text(
-                    text = analysis.detailedSynthesis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Provider badge
+                // Provider badge & verification
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Evaluated via ${analysis.llmProvider} (${analysis.modelName})",
+                        text = "Provider: ${analysis.providerActive.ifBlank { analysis.llmProvider }}",
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = GoldPrimary,
+                        fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "JSON Analysis Verified",
+                        text = "Deterministic Verified",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = BullishGreen,

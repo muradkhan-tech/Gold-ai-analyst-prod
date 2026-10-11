@@ -19,7 +19,7 @@ import androidx.room.RoomDatabase
         BacktestOutcomeEntity::class,
         com.example.data.alert.PriceAlertEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class GoldDatabase : RoomDatabase() {

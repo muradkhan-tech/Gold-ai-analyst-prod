@@ -217,16 +217,14 @@ fun InstitutionalFlowStatusWidget(
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = if (isAbsorption) {
-                                    if (report.absorptionType == AbsorptionType.BULLISH_ABSORPTION) "ACTIVE (BUY)" else "ACTIVE (SELL)"
-                                } else "INACTIVE",
+                                text = if (isAbsorption) "ACTIVE" else "INACTIVE",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isAbsorption) absorptionColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isAbsorption) BullishGreen else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
-                            text = "Vol: ${String.format(Locale.US, "%.1f", report.volumeRatio)}x • Sprd: ${String.format(Locale.US, "%.2f", report.spreadToAtrRatio)}x",
+                            text = if (isAbsorption) "INSTITUTIONAL_ABSORPTION" else "Vol: ${String.format(Locale.US, "%.1f", report.volumeRatio)}x • Sprd: ${String.format(Locale.US, "%.2f", report.spreadToAtrRatio)}x",
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -255,13 +253,8 @@ fun InstitutionalFlowStatusWidget(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = when (report.sweepStatus) {
-                                LiquiditySweepStatus.HIGH_SWEPT_REVERSED -> "HIGH PURGE (REJECTED)"
-                                LiquiditySweepStatus.LOW_SWEPT_REVERSED -> "LOW PURGE (REJECTED)"
-                                LiquiditySweepStatus.PURGE_IN_PROGRESS -> "HUNT IN PROGRESS"
-                                LiquiditySweepStatus.WITHIN_RANGE -> "WITHIN RANGE"
-                            },
-                            fontSize = 11.sp,
+                            text = report.sweepTag ?: "WITHIN RANGE",
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = sweepStatusColor
                         )

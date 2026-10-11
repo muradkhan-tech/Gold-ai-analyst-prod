@@ -36,7 +36,7 @@ class GoldSignalEngine:
         Executes multi-factor consensus combining Technical, Fundamental, and AI layers.
         Enforces strict failsafe if market data or macro news is missing or stale.
         """
-        now = datetime.datetime.utcnow()
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
 
         # -------------------------------------------------------------
         # 1. STRICT FAILSAFE CHECK: Missing or Stale Market Data
@@ -49,32 +49,53 @@ class GoldSignalEngine:
                     current_price=2860.0
                 )
 
-            # Check timestamp staleness if available
-            last_ts = None
-            if "timestamp" in candles_df.columns:
+            # Prioritize latest tick arrival timestamp in UTC (sub-second resolution)
+            staleness_sec = None
+            if latest_tick_timestamp is not None:
+                if latest_tick_timestamp.tzinfo is None:
+                    tick_utc = latest_tick_timestamp.replace(tzinfo=datetime.timezone.utc)
+                else:
+                    tick_utc = latest_tick_timestamp
+                staleness_sec = (now_utc - tick_utc).total_seconds()
+            else:
+                # Check real-time subsystem latest tick arrival
                 try:
-                    val = candles_df["timestamp"].iloc[-1]
-                    if isinstance(val, (int, float)):
-                        last_ts = datetime.datetime.utcfromtimestamp(val / 1000.0 if val > 1e11 else val)
-                    elif isinstance(val, str):
-                        last_ts = datetime.datetime.fromisoformat(val.replace("Z", "+00:00")).replace(tzinfo=None)
-                    elif isinstance(val, datetime.datetime):
-                        last_ts = val.replace(tzinfo=None)
+                    from backend.data.subsystem import market_data_subsystem
+                    if market_data_subsystem.last_tick_time is not None:
+                        staleness_sec = (now_utc - market_data_subsystem.last_tick_time).total_seconds()
                 except Exception:
                     pass
 
-            if latest_tick_timestamp:
-                last_ts = latest_tick_timestamp.replace(tzinfo=None)
+            # Fallback to candle timestamp only if no real-time tick timestamp is recorded
+            if staleness_sec is None and "timestamp" in candles_df.columns and len(candles_df) > 0:
+                try:
+                    val = candles_df["timestamp"].iloc[-1]
+                    if isinstance(val, (int, float)):
+                        candle_ts = datetime.datetime.fromtimestamp(val / 1000.0 if val > 1e11 else val, tz=datetime.timezone.utc)
+                    elif isinstance(val, str):
+                        candle_ts = datetime.datetime.fromisoformat(val.replace("Z", "+00:00"))
+                        if candle_ts.tzinfo is None:
+                            candle_ts = candle_ts.replace(tzinfo=datetime.timezone.utc)
+                    elif isinstance(val, datetime.datetime):
+                        candle_ts = val if val.tzinfo is not None else val.replace(tzinfo=datetime.timezone.utc)
+                    else:
+                        candle_ts = None
 
-            if last_ts is not None:
-                staleness_sec = (now - last_ts).total_seconds()
-                if staleness_sec > cls.MAX_MARKET_DATA_STALENESS_SEC:
-                    last_price = float(candles_df["close"].iloc[-1]) if "close" in candles_df.columns else 2860.0
-                    return cls._build_failsafe_response(
-                        signal_type="NO SIGNAL",
-                        reason=f"FAILSAFE TRIGGERED: Market data feed is stale by {int(staleness_sec)}s (> {cls.MAX_MARKET_DATA_STALENESS_SEC}s threshold). Order generation disabled.",
-                        current_price=last_price
-                    )
+                    if candle_ts is not None:
+                        # Timeframe compensation: a 15m candle opens 900s before closing.
+                        candle_staleness = (now_utc - candle_ts).total_seconds()
+                        # Deduct forming bar duration (900s) to avoid false positives on active candles
+                        staleness_sec = max(0.0, candle_staleness - 900.0)
+                except Exception:
+                    pass
+
+            if staleness_sec is not None and staleness_sec > cls.MAX_MARKET_DATA_STALENESS_SEC:
+                last_price = float(candles_df["close"].iloc[-1]) if "close" in candles_df.columns else 2860.0
+                return cls._build_failsafe_response(
+                    signal_type="NO SIGNAL",
+                    reason=f"FAILSAFE TRIGGERED: Market data feed is stale by {int(staleness_sec)}s (> {cls.MAX_MARKET_DATA_STALENESS_SEC}s threshold). Order generation disabled.",
+                    current_price=last_price
+                )
 
             # Check for missing fundamental news
             if fundamental_news is not None and len(fundamental_news) == 0 and (calendar_events is None or len(calendar_events) == 0):

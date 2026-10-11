@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.MarketTickEntity
 import com.example.data.market.SystemHealthState
+import com.example.ui.theme.BearishRed
 import com.example.ui.theme.BullishGreen
 import com.example.ui.theme.GoldPrimary
 
@@ -141,14 +142,37 @@ fun TerminalTopBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(horizontalAlignment = Alignment.End) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val isClosed = systemHealthState == SystemHealthState.MARKET_CLOSED
+                        val beaconColor = if (isClosed) BearishRed else BullishGreen
+
                         // Live pulse beacon
                         Box(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(BullishGreen.copy(alpha = alpha))
+                                .background(beaconColor.copy(alpha = if (isClosed) 1f else alpha))
                         )
                         Spacer(modifier = Modifier.width(6.dp))
+
+                        if (isClosed) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(BearishRed.copy(alpha = 0.15f))
+                                    .border(1.dp, BearishRed.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "MARKET CLOSED",
+                                    color = BearishRed,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+
                         Text(
                             text = "$${String.format("%.2f", price)}",
                             fontSize = 19.sp,

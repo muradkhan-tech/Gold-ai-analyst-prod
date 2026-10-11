@@ -749,34 +749,63 @@ fun ActiveSignalCard(signal: SignalEntity) {
             Spacer(modifier = Modifier.height(14.dp))
 
             // Price Target Grid
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                PriceLevelBox(
-                    label = "ENTRY",
-                    price = "$${String.format("%.2f", signal.entryPrice)}",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
-                )
-                PriceLevelBox(
-                    label = "STOP LOSS",
-                    price = "$${String.format("%.2f", signal.stopLoss)}",
-                    color = BearishRed,
-                    modifier = Modifier.weight(1f)
-                )
-                PriceLevelBox(
-                    label = "TP 1",
-                    price = "$${String.format("%.2f", signal.takeProfit1)}",
-                    color = BullishGreen,
-                    modifier = Modifier.weight(1f)
-                )
-                PriceLevelBox(
-                    label = "TP 2",
-                    price = "$${String.format("%.2f", signal.takeProfit2)}",
-                    color = BullishGreen,
-                    modifier = Modifier.weight(1f)
-                )
+            val isWait = signal.signalType.uppercase() == "WAIT" || signal.status.uppercase() == "WAIT"
+            if (isWait) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .padding(vertical = 12.dp, horizontal = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Awaiting Confluence Setup",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Market in consolidation or neutral chop. Awaiting institutional volume breakout.",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PriceLevelBox(
+                        label = "ENTRY",
+                        price = "$${String.format("%.2f", signal.entryPrice)}",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PriceLevelBox(
+                        label = "STOP LOSS",
+                        price = "$${String.format("%.2f", signal.stopLoss)}",
+                        color = BearishRed,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PriceLevelBox(
+                        label = "TP 1",
+                        price = "$${String.format("%.2f", signal.takeProfit1)}",
+                        color = BullishGreen,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PriceLevelBox(
+                        label = "TP 2",
+                        price = "$${String.format("%.2f", signal.takeProfit2)}",
+                        color = BullishGreen,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))

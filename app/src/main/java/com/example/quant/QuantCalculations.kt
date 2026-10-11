@@ -99,20 +99,19 @@ object QuantCalculations {
         val lower = ArrayList<Double>()
 
         for (i in prices.indices) {
-            if (i < period - 1) {
-                middle.add(prices[i])
-                upper.add(prices[i])
-                lower.add(prices[i])
+            val startIdx = max(0, i - period + 1)
+            val window = prices.subList(startIdx, i + 1)
+            val sma = window.average()
+            val variance = if (window.size > 1) {
+                window.map { (it - sma) * (it - sma) }.average()
             } else {
-                val window = prices.subList(i - period + 1, i + 1)
-                val sma = window.average()
-                val variance = window.map { (it - sma) * (it - sma) }.average()
-                val std = sqrt(variance)
-
-                middle.add(sma)
-                upper.add(sma + (stdDevMultiplier * std))
-                lower.add(sma - (stdDevMultiplier * std))
+                1.0
             }
+            val std = max(0.5, sqrt(variance))
+
+            middle.add(sma)
+            upper.add(sma + (stdDevMultiplier * std))
+            lower.add(sma - (stdDevMultiplier * std))
         }
         return Triple(upper, middle, lower)
     }
@@ -166,8 +165,9 @@ object QuantCalculations {
         val (bbUp, bbMid, bbLow) = calculateBollingerBands(closes)
         val atr = calculateAtr(candles, 14).lastOrNull() ?: 12.0
 
+        val currentPrice = closes.last()
         return TechnicalSnapshot(
-            currentPrice = closes.last(),
+            currentPrice = currentPrice,
             ema8 = ema8,
             ema21 = ema21,
             ema28 = ema28,
@@ -178,10 +178,22 @@ object QuantCalculations {
             macdLine = macd.lastOrNull() ?: 0.0,
             macdSignal = signal.lastOrNull() ?: 0.0,
             macdHistogram = hist.lastOrNull() ?: 0.0,
-            bbUpper = bbUp.lastOrNull() ?: (closes.last() + 10.0),
-            bbMiddle = bbMid.lastOrNull() ?: closes.last(),
-            bbLower = bbLow.lastOrNull() ?: (closes.last() - 10.0),
+            bbUpper = bbUp.lastOrNull() ?: (currentPrice + 10.0),
+            bbMiddle = bbMid.lastOrNull() ?: currentPrice,
+            bbLower = bbLow.lastOrNull() ?: (currentPrice - 10.0),
             atr14 = atr
         )
+    }
+
+    /**
+     * Vectorized technical indicator calculation for all supported timeframes (M1, M3, M5, M10, M15, H1).
+     * Handles edge cases gracefully: If candle count < 200 bars, computes available indicators without NaN or crashing.
+     */
+    fun calculateAllIndicators(timeframeCandles: Map<String, List<CandleEntity>>): Map<String, TechnicalSnapshot> {
+        val results = mutableMapOf<String, TechnicalSnapshot>()
+        for ((tf, candles) in timeframeCandles) {
+            results[tf] = computeSnapshot(candles)
+        }
+        return results
     }
 }

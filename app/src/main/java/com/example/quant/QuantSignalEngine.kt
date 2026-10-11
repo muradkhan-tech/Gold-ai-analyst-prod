@@ -5,6 +5,7 @@ import com.example.data.local.EconomicEventEntity
 import com.example.data.local.FundamentalAnalysisEntity
 import com.example.data.local.NewsArticleEntity
 import com.example.data.local.SignalEntity
+import com.example.data.local.TradingViewAlertEntity
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -32,6 +33,8 @@ object QuantSignalEngine {
         calendarEvents: List<EconomicEventEntity> = emptyList(),
         aiAnalysis: FundamentalAnalysisEntity? = null,
         silentLiquidityReport: SilentLiquidityReport? = null,
+        tradingViewAlerts: List<TradingViewAlertEntity> = emptyList(),
+        latestTickTimestamp: Long? = null,
         enforceFailsafe: Boolean = true
     ): SignalEntity {
         val now = System.currentTimeMillis()
@@ -51,7 +54,21 @@ object QuantSignalEngine {
             }
 
             val lastCandle = candles.last()
-            val staleness = now - lastCandle.timestamp
+            val staleness = if (latestTickTimestamp != null) {
+                now - latestTickTimestamp
+            } else {
+                val tfDurationMs = when (timeframe) {
+                    "1m" -> 60_000L
+                    "3m" -> 180_000L
+                    "5m" -> 300_000L
+                    "10m" -> 600_000L
+                    "15m" -> 900_000L
+                    "1h" -> 3_600_000L
+                    else -> 900_000L
+                }
+                maxOf(0L, (now - lastCandle.timestamp) - tfDurationMs)
+            }
+
             if (staleness > MAX_STALENESS_MS) {
                 val sec = staleness / 1000
                 return buildFailsafeSignal(
@@ -130,12 +147,22 @@ object QuantSignalEngine {
             reasons.add("Bollinger lower band support pressure")
         }
 
-        // MTF Alignment Integration
+        // MTF Alignment Integration across M1, M3, M5, M10, M15, H1
+        var isHtfBullish = false
+        var isHtfBearish = false
         if (alignment != null) {
             val bullPct = alignment.bullishPercentage
             val mtfScore = (bullPct - 50.0) * 2.0 // Map 0..100% to -100..+100
             techScore = (techScore * 0.6) + (mtfScore * 0.4)
             reasons.add("MTF Confluence: ${alignment.overallStatus} (${round(bullPct)}% bullish)")
+
+            val m15Trend = alignment.perTimeframe.firstOrNull { it.timeframe == "15m" }?.trend ?: "NEUTRAL"
+            val h1Trend = alignment.perTimeframe.firstOrNull { it.timeframe == "1h" }?.trend ?: "NEUTRAL"
+            isHtfBullish = (m15Trend == "BULLISH" && h1Trend == "BULLISH") || (m15Trend == "BULLISH" && h1Trend != "BEARISH")
+            isHtfBearish = (m15Trend == "BEARISH" && h1Trend == "BEARISH") || (m15Trend == "BEARISH" && h1Trend != "BULLISH")
+        } else {
+            isHtfBullish = p > snapshot.ema50
+            isHtfBearish = p < snapshot.ema50
         }
 
         techScore = techScore.coerceIn(-100.0, 100.0)
@@ -191,17 +218,47 @@ object QuantSignalEngine {
         }
 
         // -------------------------------------------------------------
-        // 4.5 SILENT LIQUIDITY LAYER (Institutional Edge Multipliers)
+        // 4.5 SILENT LIQUIDITY LAYER & VOLUME DELTA PRESSURE
         // -------------------------------------------------------------
         val liquidityReport = silentLiquidityReport ?: SilentLiquidityEngine.analyzeLiquidity(candles, now)
         val liquidityScoreModifier = liquidityReport.scoreModifier // -50.0 to +50.0
         reasons.addAll(liquidityReport.confluenceNotes)
 
+        // Volume Delta Pressure contribution
+        val deltaMetrics = liquidityReport.deltaMetrics
+        if (deltaMetrics.dominantParty == "Net Buyers" && deltaMetrics.buyingAggressionPct > 52.0) {
+            reasons.add("Volume Delta: Net Buyers (+${round(deltaMetrics.buyingAggressionPct)}% aggression)")
+        } else if (deltaMetrics.dominantParty == "Net Sellers" && deltaMetrics.sellingAggressionPct > 52.0) {
+            reasons.add("Volume Delta: Net Sellers (+${round(deltaMetrics.sellingAggressionPct)}% aggression)")
+        }
+
+        // -------------------------------------------------------------
+        // 4.6 TRADINGVIEW PROPRIETARY ALERT CONFLUENCE BOOST (+15 pts)
+        // -------------------------------------------------------------
+        var tvBoost = 0.0
+        val recentVerifiedAlerts = tradingViewAlerts.filter { alert ->
+            val isProprietary = alert.indicator.contains("Scalping with Dr Hafiz", ignoreCase = true) ||
+                    alert.indicator.contains("3ESRA", ignoreCase = true)
+            val isRecent = (now - alert.timestamp) < (15 * 60 * 1000L) // active within last 15 mins
+            isProprietary && alert.isVerified && isRecent
+        }
+
+        if (recentVerifiedAlerts.isNotEmpty()) {
+            val latestTvAlert = recentVerifiedAlerts.first()
+            if (latestTvAlert.action.contains("BUY", ignoreCase = true)) {
+                tvBoost = 15.0
+                reasons.add("TradingView Webhook Confluence Boost (+15 pts): Verified '${latestTvAlert.indicator}' BUY signal")
+            } else if (latestTvAlert.action.contains("SELL", ignoreCase = true)) {
+                tvBoost = -15.0
+                reasons.add("TradingView Webhook Confluence Boost (-15 pts): Verified '${latestTvAlert.indicator}' SELL signal")
+            }
+        }
+
         // -------------------------------------------------------------
         // 5. MULTI-FACTOR CONSENSUS CALCULATION
+        // Combines Technical Score, Institutional Volume Delta, and Macro Bias
         // -------------------------------------------------------------
-        // Base: Technical 40%, Fundamental 25%, AI Reasoning 20%, Silent Liquidity 15%
-        var compositeScore = (techScore * 0.40) + (fundScore * 0.25) + (aiScore * 0.20) + (liquidityScoreModifier * 0.30)
+        var compositeScore = (techScore * 0.40) + (fundScore * 0.25) + (aiScore * 0.20) + (liquidityScoreModifier * 0.30) + tvBoost
 
         // Risk adjustment: If High Market Risk, dampen conviction towards neutral
         if (marketRisk.equals("HIGH", ignoreCase = true)) {
@@ -209,65 +266,80 @@ object QuantSignalEngine {
             reasons.add("High Market Risk catalyst dampens directional commitment")
         }
 
-        val finalSignal = when {
-            compositeScore >= 68.0 -> "STRONG BUY"
-            compositeScore >= 42.0 -> "BUY"
-            compositeScore >= 18.0 -> "WEAK BUY"
-            compositeScore <= -68.0 -> "STRONG SELL"
-            compositeScore <= -42.0 -> "SELL"
-            compositeScore <= -18.0 -> "WEAK SELL"
+        compositeScore = compositeScore.coerceIn(-100.0, 100.0)
+
+        // Confluence Thresholds:
+        // Score >= +65 with M15/H1 bullish alignment: 'STRONG BUY'
+        // Score between +35 and +64: 'BUY'
+        // Score between -34 and +34 (or opposing HTF trend): 'WAIT' (Neutral chop)
+        // Score between -35 and -64: 'SELL'
+        // Score <= -65 with M15/H1 bearish alignment: 'STRONG SELL'
+        val finalSignal: String = when {
+            compositeScore >= 65.0 && isHtfBullish -> "STRONG BUY"
+            compositeScore >= 65.0 && !isHtfBullish -> "BUY" // Opposing HTF caps at BUY or WAIT
+            compositeScore in 35.0..64.9 && !isHtfBearish -> "BUY"
+            compositeScore <= -65.0 && isHtfBearish -> "STRONG SELL"
+            compositeScore <= -65.0 && !isHtfBearish -> "SELL"
+            compositeScore in -64.9..-35.0 && !isHtfBullish -> "SELL"
             else -> "WAIT"
         }
 
         val confidence = min(98.0, max(50.0, 50.0 + (abs(compositeScore) * 0.48)))
 
         // -------------------------------------------------------------
-        // 6. EXACT ENTRY ZONES, STOP LOSS, TAKE PROFIT, RISK/REWARD
+        // 6. DYNAMIC LEVEL GENERATION & INVALIDATION
+        // If status is 'WAIT' or 'NO SIGNAL': do not display misleading active trade setups.
+        // Render fields as disabled dashes ("—") / 0.0 with status 'Awaiting Trend Alignment'.
+        // When valid BUY/SELL:
+        // Suggested Entry = Current live Close (p)
+        // Stop Loss = Close ± (1.5 * ATR(14))
+        // TP1 = Close ∓ (1.5 * ATR(14)) [Risk/Reward 1:1.0]
+        // TP2 = Close ∓ (3.0 * ATR(14)) [Risk/Reward 1:2.0]
         // -------------------------------------------------------------
-        val isBullish = "BUY" in finalSignal
-        val isBearish = "SELL" in finalSignal
-        val isStrong = "STRONG" in finalSignal
+        val isTradeSetupActive = finalSignal in listOf("STRONG BUY", "BUY", "SELL", "STRONG SELL")
 
-        val widenFactor = if (liquidityReport.widenStopsBuffer) 1.35 else 1.0
-        val atrSlMult = (if (isStrong) 1.4 else 1.6) * widenFactor
-        val atrTp1Mult = (if (isStrong) 2.0 else 1.8) * widenFactor
-        val atrTp2Mult = (if (isStrong) 3.6 else 3.2) * widenFactor
-
-        val entryPrice = roundPrice(p)
+        val entryPrice: Double
         val entryZoneLow: Double
         val entryZoneHigh: Double
         val stopLoss: Double
         val takeProfit1: Double
         val takeProfit2: Double
         val rrRatio: Double
+        val signalStatus: String
 
-        if (isBullish) {
-            entryZoneLow = roundPrice(p - (atr * 0.25))
-            entryZoneHigh = roundPrice(p + (atr * 0.15))
-            stopLoss = roundPrice(p - (atr * atrSlMult))
-            takeProfit1 = roundPrice(p + (atr * atrTp1Mult))
-            takeProfit2 = roundPrice(p + (atr * atrTp2Mult))
-            val risk = max(0.1, entryPrice - stopLoss)
-            val reward = max(0.1, takeProfit1 - entryPrice)
-            rrRatio = roundRatio(reward / risk)
-        } else if (isBearish) {
-            entryZoneLow = roundPrice(p - (atr * 0.15))
-            entryZoneHigh = roundPrice(p + (atr * 0.25))
-            stopLoss = roundPrice(p + (atr * atrSlMult))
-            takeProfit1 = roundPrice(p - (atr * atrTp1Mult))
-            takeProfit2 = roundPrice(p - (atr * atrTp2Mult))
-            val risk = max(0.1, stopLoss - entryPrice)
-            val reward = max(0.1, entryPrice - takeProfit1)
-            rrRatio = roundRatio(reward / risk)
+        if (isTradeSetupActive) {
+            entryPrice = roundPrice(p)
+            val atrOffset = roundPrice(1.5 * atr)
+            val atrTp2Offset = roundPrice(3.0 * atr)
+
+            if ("BUY" in finalSignal) {
+                entryZoneLow = roundPrice(p - (atr * 0.20))
+                entryZoneHigh = roundPrice(p + (atr * 0.15))
+                stopLoss = roundPrice(p - atrOffset)
+                takeProfit1 = roundPrice(p + atrOffset)
+                takeProfit2 = roundPrice(p + atrTp2Offset)
+                rrRatio = 1.0 // TP1 RR is 1:1.0, TP2 RR is 1:2.0
+            } else {
+                // SELL
+                entryZoneLow = roundPrice(p - (atr * 0.15))
+                entryZoneHigh = roundPrice(p + (atr * 0.20))
+                stopLoss = roundPrice(p + atrOffset)
+                takeProfit1 = roundPrice(p - atrOffset)
+                takeProfit2 = roundPrice(p - atrTp2Offset)
+                rrRatio = 1.0
+            }
+            signalStatus = "ACTIVE"
         } else {
-            // WAIT / Consolidation
-            entryZoneLow = roundPrice(p - (atr * 0.4))
-            entryZoneHigh = roundPrice(p + (atr * 0.4))
-            stopLoss = roundPrice(p - atr)
-            takeProfit1 = roundPrice(p + atr)
-            takeProfit2 = roundPrice(p + (atr * 2.0))
-            rrRatio = 1.0
-            reasons.add("Consolidation mode: Awaiting directional catalyst breakout.")
+            // Invalidation & Card Coherence: WAIT or NO SIGNAL
+            entryPrice = 0.0
+            entryZoneLow = 0.0
+            entryZoneHigh = 0.0
+            stopLoss = 0.0
+            takeProfit1 = 0.0
+            takeProfit2 = 0.0
+            rrRatio = 0.0
+            signalStatus = "Awaiting Trend Alignment"
+            reasons.add("Neutral consolidation: Awaiting trend alignment across M15/H1 timeframes.")
         }
 
         val fullReasoning = (reasons + fundReasons).joinToString(" • ")
@@ -285,7 +357,7 @@ object QuantSignalEngine {
             takeProfit2 = takeProfit2,
             confidenceScore = round1(confidence),
             riskRewardRatio = rrRatio,
-            status = "ACTIVE",
+            status = signalStatus,
             reasoning = fullReasoning,
             timestamp = now
         )

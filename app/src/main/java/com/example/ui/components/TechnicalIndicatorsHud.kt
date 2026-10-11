@@ -127,6 +127,86 @@ fun TechnicalIndicatorsHud(
                 modifier = Modifier.weight(1f)
             )
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // EMA Ribbon Confluence Strip (8, 21, 28, 50, 200)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+                .padding(10.dp)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "EMA RIBBON ALIGNMENT",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (snapshot.currentPrice > snapshot.ema8 && snapshot.ema8 > snapshot.ema21 && snapshot.ema21 > snapshot.ema50) "BULLISH STACK" else if (snapshot.currentPrice < snapshot.ema8 && snapshot.ema8 < snapshot.ema21 && snapshot.ema21 < snapshot.ema50) "BEARISH STACK" else "MIXED STACK",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = if (snapshot.currentPrice > snapshot.ema8 && snapshot.ema8 > snapshot.ema21) BullishGreen else if (snapshot.currentPrice < snapshot.ema8 && snapshot.ema8 < snapshot.ema21) BearishRed else GoldPrimary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    EmaPill(label = "8", value = snapshot.ema8, price = snapshot.currentPrice, modifier = Modifier.weight(1f))
+                    EmaPill(label = "21", value = snapshot.ema21, price = snapshot.currentPrice, modifier = Modifier.weight(1f))
+                    EmaPill(label = "28", value = snapshot.ema28, price = snapshot.currentPrice, modifier = Modifier.weight(1f))
+                    EmaPill(label = "50", value = snapshot.ema50, price = snapshot.currentPrice, modifier = Modifier.weight(1f))
+                    EmaPill(label = "200", value = snapshot.ema200, price = snapshot.currentPrice, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmaPill(
+    label: String,
+    value: Double,
+    price: Double,
+    modifier: Modifier = Modifier
+) {
+    val isAbove = price >= value
+    val color = if (isAbove) BullishGreen else BearishRed
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(vertical = 4.dp, horizontal = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "EMA$label",
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = String.format("%.1f", value),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = color
+            )
+        }
     }
 }
 

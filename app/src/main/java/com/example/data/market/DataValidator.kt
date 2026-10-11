@@ -5,7 +5,8 @@ import com.example.data.local.CandleEntity
 enum class SystemHealthState(val label: String) {
     LIVE("LIVE (UTC)"),
     OFFLINE_DELAYED("OFFLINE/DELAYED"),
-    RATE_LIMITED_NEED_KEY("RATE LIMITED - API KEY REQUIRED")
+    RATE_LIMITED_NEED_KEY("RATE LIMITED - API KEY REQUIRED"),
+    MARKET_CLOSED("MARKET CLOSED (WEEKEND HALT)")
 }
 
 data class ValidationReport(
@@ -20,6 +21,25 @@ data class ValidationReport(
 object DataValidator {
 
     private const val MAX_STALE_LATENCY_SECONDS = 300L // 5 minutes threshold
+
+    /**
+     * Strict Market Hours Validation (Weekend Halt):
+     * XAUUSD trades from Sunday 22:00 UTC to Friday 22:00 UTC.
+     * Closed from Friday 22:00 UTC to Sunday 22:00 UTC, and during daily 21:00-22:00 UTC roll.
+     */
+    fun isMarketOpen(nowEpochMs: Long = System.currentTimeMillis()): Boolean {
+        val calendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        calendar.timeInMillis = nowEpochMs
+        val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK) // 1=Sunday, 6=Friday, 7=Saturday
+        val hour = calendar.get(java.util.Calendar.HOUR_OF_DAY) // 0..23
+
+        return when (dayOfWeek) {
+            java.util.Calendar.SATURDAY -> false
+            java.util.Calendar.SUNDAY -> hour >= 22
+            java.util.Calendar.FRIDAY -> hour < 22
+            else -> hour != 21 // Daily rollover break 21:00-22:00 UTC
+        }
+    }
 
     fun validate(
         rawCandles: List<CandleEntity>,

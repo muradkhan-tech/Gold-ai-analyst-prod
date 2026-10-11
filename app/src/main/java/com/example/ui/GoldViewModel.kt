@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.ai.GeminiClient
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import com.example.data.GoldRepository
 import com.example.data.local.ApiKeyConfigEntity
 import com.example.data.local.CandleEntity
@@ -25,10 +27,6 @@ import com.example.quant.QuantCalculations
 import com.example.quant.TechnicalSnapshot
 import com.example.quant.SilentLiquidityEngine
 import com.example.quant.SilentLiquidityReport
-import com.google.firebase.Firebase
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.auth.auth
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
@@ -37,7 +35,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -66,13 +63,27 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = GoldRepository(GoldDatabase.getDatabase(application))
 
+    val firebaseUser: StateFlow<com.google.firebase.auth.FirebaseUser?> = kotlinx.coroutines.flow.callbackFlow {
+        val auth = com.google.firebase.Firebase.auth
+        val listener = com.google.firebase.auth.FirebaseAuth.AuthStateListener { currentAuth ->
+            trySend(currentAuth.currentUser)
+        }
+        auth.addAuthStateListener(listener)
+        trySend(auth.currentUser)
+        awaitClose { auth.removeAuthStateListener(listener) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.google.firebase.Firebase.auth.currentUser)
+
+    fun signOut() {
+        com.google.firebase.Firebase.auth.signOut()
+    }
+
     private val _currentTab = MutableStateFlow(TerminalTab.TERMINAL)
     val currentTab: StateFlow<TerminalTab> = _currentTab.asStateFlow()
 
     private val _selectedTimeframe = MutableStateFlow("15m")
     val selectedTimeframe: StateFlow<String> = _selectedTimeframe.asStateFlow()
 
-    private val _isDarkTheme = MutableStateFlow(true)
+    private val _isDarkTheme = MutableStateFlow(false)
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
     // Real-time market data subsystem state
@@ -128,20 +139,6 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
 
     val currentUser: StateFlow<UserProfileEntity?> = repository.currentUser
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    private val auth: FirebaseAuth = Firebase.auth
-
-    val firebaseUser: StateFlow<FirebaseUser?> = callbackFlow {
-        val listener = FirebaseAuth.AuthStateListener { authState ->
-            trySend(authState.currentUser)
-        }
-        auth.addAuthStateListener(listener)
-        awaitClose { auth.removeAuthStateListener(listener) }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), auth.currentUser)
-
-    fun signOut() {
-        auth.signOut()
-    }
 
     // Embedded Developer Assistant (Admin Only) Chat State
     private val _adminDevChatMessages = MutableStateFlow<List<ChatMessage>>(
@@ -320,11 +317,18 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
             val snapshot = getTechnicalSnapshot()
             val latestSig = signals.value.firstOrNull()?.signalType ?: "BUY"
             val healthLabel = systemHealthState.value.label
+            val report = silentLiquidityReport.value
+            val asianHighStr = report?.asianRange?.high?.let { String.format("%.2f", it) } ?: "2875.00"
+            val asianLowStr = report?.asianRange?.low?.let { String.format("%.2f", it) } ?: "2852.00"
+            val tapeDominance = report?.deltaMetrics?.dominantParty ?: "Net Buyers"
+            val buyersPct = report?.deltaMetrics?.buyingAggressionPct ?: 53.5
 
             val marketContext = """
                 [INSTITUTIONAL TELEMETRY SNAPSHOT - XAUUSD]
                 Market Feed Status: $healthLabel (${activeProviderName.value})
                 Current Spot Price: $${String.format("%.2f", currentPrice)}
+                Asian Session Range: Low $${asianLowStr} - High $${asianHighStr} (Spread: $${report?.asianRange?.rangeSpread?.let { String.format("%.2f", it) } ?: "23.00"})
+                Volume Delta Pressure: $tapeDominance (${String.format("%.1f", buyersPct)}% Buyers)
                 RSI (14): ${String.format("%.1f", snapshot.rsi14)}
                 EMA 20: $${String.format("%.2f", snapshot.ema20)} | EMA 50: $${String.format("%.2f", snapshot.ema50)} | EMA 200: $${String.format("%.2f", snapshot.ema200)}
                 MACD Line: ${String.format("%.2f", snapshot.macdLine)} (Hist: ${String.format("%.2f", snapshot.macdHistogram)})
@@ -350,12 +354,8 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
             result.onSuccess { responseText ->
                 _chatMessages.value = _chatMessages.value + ChatMessage(role = "model", content = responseText)
             }.onFailure { err ->
-                val fallbackReason = if (effectiveKey.isBlank() || effectiveKey == "MY_GEMINI_API_KEY") {
-                    "Notice: GEMINI_API_KEY is not configured yet. You can enter your personal Gemini API key in the 'Settings' tab to enable live cloud analysis. \n\n[Local Quant Analysis]: Based on current market telemetry (Spot: $${String.format("%.2f", currentPrice)}, RSI: ${String.format("%.1f", snapshot.rsi14)}), the price is holding above the EMA20 support. The institutional bias remains Bullish targeting $${String.format("%.2f", snapshot.bbUpper)} with a stop-loss invalidation at $${String.format("%.2f", snapshot.bbLower)}."
-                } else {
-                    "Analysis error: ${err.localizedMessage ?: "Unknown error"}"
-                }
-                _chatMessages.value = _chatMessages.value + ChatMessage(role = "model", content = fallbackReason)
+                val fallback = GeminiClient.generateLocalQuantAnalystResponse(query, marketContext)
+                _chatMessages.value = _chatMessages.value + ChatMessage(role = "model", content = fallback)
             }
         }
     }
@@ -423,7 +423,17 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
         _isEvaluatingFundamentals.value = true
         _fundamentalError.value = null
         viewModelScope.launch {
-            val result = repository.evaluateFundamentals()
+            val report = silentLiquidityReport.value
+            val price = latestTick.value?.price ?: 2865.0
+            val asianHigh = report?.asianRange?.high
+            val asianLow = report?.asianRange?.low
+            val buyersPct = report?.deltaMetrics?.buyingAggressionPct
+            val result = repository.evaluateFundamentals(
+                asianHigh = asianHigh,
+                asianLow = asianLow,
+                spotPrice = price,
+                netBuyersPct = buyersPct
+            )
             _isEvaluatingFundamentals.value = false
             result.onFailure { err ->
                 _fundamentalError.value = err.message ?: "Failed to generate fundamental analysis."
@@ -523,6 +533,27 @@ class GoldViewModel(application: Application) : AndroidViewModel(application) {
 
             _isAdminDevThinking.value = false
             _adminDevChatMessages.value = _adminDevChatMessages.value + ChatMessage(role = "model", content = responseContent)
+        }
+    }
+
+    fun cleanHistoricalSignals(olderThanMillis: Long, onResult: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.cleanHistoricalSignals(olderThanMillis)
+            onResult(count)
+        }
+    }
+
+    fun clearGarbageData(onResult: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.clearGarbageFailedData()
+            onResult(count)
+        }
+    }
+
+    fun wipeTestData(onResult: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.wipeAllTestData()
+            onResult(count)
         }
     }
 }
